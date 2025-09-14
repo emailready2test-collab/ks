@@ -1,18 +1,20 @@
 import express from 'express';
 import multer from 'multer';
-import sharp from 'sharp';
 import path from 'path';
 import fs from 'fs';
 import DiseaseReport from '../models/DiseaseReport.js';
-import { validateImageFile, validateCoordinates } from '../utils/validation.js';
-import { authenticateToken } from '../middleware/auth.js';
+import User from '../models/User.js';
+import { auth } from '../middleware/auth.js';
+import { validationService } from '../utils/validation.js';
+import { errorService } from '../utils/errorService.js';
+import { analyzeDiseaseImage } from '../utils/aiService.js';
 
 const router = express.Router();
 
 // Configure multer for image uploads
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const uploadDir = 'uploads/disease-reports';
+    const uploadDir = 'uploads/disease-images';
     if (!fs.existsSync(uploadDir)) {
       fs.mkdirSync(uploadDir, { recursive: true });
     }
@@ -20,308 +22,103 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+    cb(null, `disease-${uniqueSuffix}${path.extname(file.originalname)}`);
   }
 });
 
 const upload = multer({
   storage: storage,
   limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
-    files: 5 // Maximum 5 images
+    fileSize: 10 * 1024 * 1024 // 10MB limit
   },
   fileFilter: (req, file, cb) => {
-    const validation = validateImageFile(file);
-    if (validation.valid) {
-      cb(null, true);
+    const allowedTypes = /jpeg|jpg|png|gif/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+
+    if (mimetype && extname) {
+      return cb(null, true);
     } else {
-      cb(new Error(validation.error), false);
+      cb(new Error('Only image files are allowed'));
     }
   }
 });
 
-// AI Disease Detection (Mock Implementation)
-const analyzeDisease = async (imagePath) => {
+// Get all disease reports for a farmer
+router.get('/', auth, async (req, res) => {
   try {
-    // In production, this would integrate with TensorFlow.js or call a PyTorch API
-    // For now, we'll simulate AI analysis with mock data
+    const farmerId = req.user.id;
+    const { 
+      page = 1, 
+      limit = 20, 
+      cropName, 
+      diseaseName,
+      status,
+      startDate,
+      endDate,
+      sortBy = 'createdAt',
+      sortOrder = 'desc'
+    } = req.query;
+
+    // Build filter object
+    const filter = { farmerId };
     
-    const mockDiseases = [
-      {
-        disease: 'Leaf Blight',
-        confidence: 85,
-        alternatives: [
-          { disease: 'Bacterial Spot', confidence: 70 },
-          { disease: 'Fungal Infection', confidence: 60 }
-        ]
-      },
-      {
-        disease: 'Powdery Mildew',
-        confidence: 92,
-        alternatives: [
-          { disease: 'Downy Mildew', confidence: 75 },
-          { disease: 'Rust Disease', confidence: 65 }
-        ]
-      },
-      {
-        disease: 'Root Rot',
-        confidence: 78,
-        alternatives: [
-          { disease: 'Nutrient Deficiency', confidence: 70 },
-          { disease: 'Water Stress', confidence: 60 }
-        ]
-      }
-    ];
-
-    // Simulate processing time
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    if (cropName) filter['cropInfo.cropName'] = new RegExp(cropName, 'i');
+    if (diseaseName) filter['aiAnalysis.diseaseName'] = new RegExp(diseaseName, 'i');
+    if (status) filter.status = status;
     
-    // Return random disease for demo
-    const randomDisease = mockDiseases[Math.floor(Math.random() * mockDiseases.length)];
-    
-    return {
-      success: true,
-      diseaseDetected: randomDisease.disease,
-      confidence: randomDisease.confidence,
-      alternativeDiagnoses: randomDisease.alternatives,
-      analysisStatus: 'completed'
-    };
-    
-  } catch (error) {
-    console.error('AI Analysis error:', error);
-    return {
-      success: false,
-      errorMessage: 'Unable to detect disease. Please try again with a clearer picture.',
-      analysisStatus: 'failed'
-    };
-  }
-};
-
-// Generate treatment recommendations
-const generateRecommendations = (disease) => {
-  const recommendations = {
-    'Leaf Blight': {
-      organic: [
-        {
-          treatment: 'Neem Oil Spray',
-          dosage: '2-3ml per liter',
-          frequency: 'Every 7 days',
-          duration: '3-4 weeks'
-        },
-        {
-          treatment: 'Copper-based Fungicide',
-          dosage: '1-2g per liter',
-          frequency: 'Every 10 days',
-          duration: '2-3 weeks'
-        }
-      ],
-      chemical: [
-        {
-          treatment: 'Chlorothalonil',
-          dosage: '2-3g per liter',
-          frequency: 'Every 7-10 days',
-          duration: '2-3 weeks',
-          safetyNotes: 'Wear protective gear. Avoid spraying during flowering.'
-        }
-      ],
-      preventive: [
-        {
-          measure: 'Proper Spacing',
-          description: 'Ensure adequate spacing between plants for air circulation'
-        },
-        {
-          measure: 'Water Management',
-          description: 'Avoid overhead watering. Water at soil level.'
-        }
-      ]
-    },
-    'Powdery Mildew': {
-      organic: [
-        {
-          treatment: 'Baking Soda Solution',
-          dosage: '1 tablespoon per gallon',
-          frequency: 'Every 3-5 days',
-          duration: '2-3 weeks'
-        }
-      ],
-      chemical: [
-        {
-          treatment: 'Sulfur-based Fungicide',
-          dosage: 'As per label instructions',
-          frequency: 'Every 7-10 days',
-          duration: '2-3 weeks',
-          safetyNotes: 'Do not apply in hot weather. Test on small area first.'
-        }
-      ],
-      preventive: [
-        {
-          measure: 'Pruning',
-          description: 'Remove affected leaves and improve air circulation'
-        }
-      ]
-    }
-  };
-
-  return recommendations[disease] || {
-    organic: [{ treatment: 'Consult local agricultural expert', dosage: 'N/A', frequency: 'N/A', duration: 'N/A' }],
-    chemical: [{ treatment: 'Consult local agricultural expert', dosage: 'N/A', frequency: 'N/A', duration: 'N/A', safetyNotes: 'N/A' }],
-    preventive: [{ measure: 'General Plant Care', description: 'Maintain proper watering and nutrition' }]
-  };
-};
-
-// Upload images and analyze disease
-router.post('/analyze', authenticateToken, upload.array('images', 5), async (req, res) => {
-  try {
-    const { cropName, cropVariety, symptoms, severity, location } = req.body;
-    const farmerId = req.user.userId;
-
-    if (!req.files || req.files.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Please upload at least one image'
-      });
+    if (startDate || endDate) {
+      filter.createdAt = {};
+      if (startDate) filter.createdAt.$gte = new Date(startDate);
+      if (endDate) filter.createdAt.$lte = new Date(endDate);
     }
 
-    if (!cropName) {
-      return res.status(400).json({
-        success: false,
-        message: 'Crop name is required'
-      });
-    }
+    // Build sort object
+    const sort = {};
+    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
 
-    // Compress images
-    const compressedImages = [];
-    for (const file of req.files) {
-      const compressedPath = file.path.replace(/\.[^/.]+$/, '_compressed.jpg');
-      
-      await sharp(file.path)
-        .resize(800, 600, { fit: 'inside', withoutEnlargement: true })
-        .jpeg({ quality: 80 })
-        .toFile(compressedPath);
-
-      compressedImages.push({
-        filename: path.basename(compressedPath),
-        originalName: file.originalname,
-        mimetype: 'image/jpeg',
-        size: fs.statSync(compressedPath).size,
-        url: `/uploads/disease-reports/${path.basename(compressedPath)}`,
-        compressed: true
-      });
-
-      // Remove original file to save space
-      fs.unlinkSync(file.path);
-    }
-
-    // Create disease report
-    const diseaseReport = new DiseaseReport({
-      farmerId,
-      cropName,
-      cropVariety,
-      images: compressedImages,
-      location: location ? JSON.parse(location) : {},
-      symptoms,
-      severity: severity || 'moderate',
-      aiAnalysis: {
-        analysisStatus: 'processing'
-      }
-    });
-
-    await diseaseReport.save();
-
-    // Start AI analysis
-    const analysisResult = await analyzeDisease(compressedImages[0].url);
-    
-    if (analysisResult.success) {
-      // Generate recommendations
-      const recommendations = generateRecommendations(analysisResult.diseaseDetected);
-      
-      // Update disease report with analysis results
-      diseaseReport.aiAnalysis = {
-        diseaseDetected: analysisResult.diseaseDetected,
-        confidence: analysisResult.confidence,
-        alternativeDiagnoses: analysisResult.alternativeDiagnoses,
-        analysisStatus: 'completed'
-      };
-      
-      diseaseReport.recommendations = recommendations;
-      
-      await diseaseReport.save();
-
-      res.json({
-        success: true,
-        message: 'Disease analysis completed',
-        reportId: diseaseReport._id,
-        analysis: {
-          diseaseDetected: analysisResult.diseaseDetected,
-          confidence: analysisResult.confidence,
-          alternativeDiagnoses: analysisResult.alternativeDiagnoses,
-          recommendations
-        }
-      });
-    } else {
-      // Update with error
-      diseaseReport.aiAnalysis = {
-        analysisStatus: 'failed',
-        errorMessage: analysisResult.errorMessage
-      };
-      await diseaseReport.save();
-
-      res.status(400).json({
-        success: false,
-        message: analysisResult.errorMessage
-      });
-    }
-
-  } catch (error) {
-    console.error('Disease analysis error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to analyze disease. Please try again.'
-    });
-  }
-});
-
-// Get disease reports for a farmer
-router.get('/reports', authenticateToken, async (req, res) => {
-  try {
-    const farmerId = req.user.userId;
-    const { page = 1, limit = 10 } = req.query;
-
-    const reports = await DiseaseReport.find({ farmerId })
-      .sort({ createdAt: -1 })
+    const reports = await DiseaseReport.find(filter)
+      .sort(sort)
       .limit(limit * 1)
       .skip((page - 1) * limit)
-      .populate('farmerId', 'name phone village district');
+      .populate('farmerId', 'name phone')
+      .populate('expertReview.reviewedBy', 'name role')
+      .lean();
 
-    const total = await DiseaseReport.countDocuments({ farmerId });
+    const total = await DiseaseReport.countDocuments(filter);
 
     res.json({
       success: true,
-      reports,
-      pagination: {
-        current: parseInt(page),
-        pages: Math.ceil(total / limit),
-        total
+      data: {
+        reports,
+        pagination: {
+          current: parseInt(page),
+          pages: Math.ceil(total / limit),
+          total,
+          limit: parseInt(limit)
+        }
       }
     });
 
   } catch (error) {
-    console.error('Get reports error:', error);
+    console.error('Get disease reports error:', error);
+    const appError = errorService.handleApiError(error, 'getDiseaseReports');
     res.status(500).json({
       success: false,
-      message: 'Failed to get disease reports'
+      message: errorService.getUserFriendlyMessage(appError)
     });
   }
 });
 
-// Get specific disease report
-router.get('/reports/:id', authenticateToken, async (req, res) => {
+// Get single disease report
+router.get('/:id', auth, async (req, res) => {
   try {
-    const { id } = req.params;
-    const farmerId = req.user.userId;
+    const reportId = req.params.id;
+    const farmerId = req.user.id;
 
-    const report = await DiseaseReport.findOne({ _id: id, farmerId })
-      .populate('farmerId', 'name phone village district');
+    const report = await DiseaseReport.findOne({ _id: reportId, farmerId })
+      .populate('farmerId', 'name phone')
+      .populate('expertReview.reviewedBy', 'name role');
 
     if (!report) {
       return res.status(404).json({
@@ -332,14 +129,464 @@ router.get('/reports/:id', authenticateToken, async (req, res) => {
 
     res.json({
       success: true,
-      report
+      data: { report }
     });
 
   } catch (error) {
-    console.error('Get report error:', error);
+    console.error('Get disease report error:', error);
+    const appError = errorService.handleApiError(error, 'getDiseaseReport');
     res.status(500).json({
       success: false,
-      message: 'Failed to get disease report'
+      message: errorService.getUserFriendlyMessage(appError)
+    });
+  }
+});
+
+// Upload image and analyze disease
+router.post('/analyze', auth, upload.single('image'), async (req, res) => {
+  try {
+    const farmerId = req.user.id;
+    const { cropInfo, weather } = req.body;
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'Image file is required'
+      });
+    }
+
+    // Validate crop info
+    const validation = validationService.validateCropInfo(cropInfo);
+    if (!validation.isValid) {
+      return res.status(400).json({
+        success: false,
+        message: 'Validation failed',
+        errors: validation.errors
+      });
+    }
+
+    // Create disease report
+    const reportData = {
+      farmerId,
+      image: {
+        url: `/uploads/disease-images/${req.file.filename}`,
+        filename: req.file.filename,
+        originalName: req.file.originalname,
+        mimetype: req.file.mimetype,
+        size: req.file.size
+      },
+      cropInfo: JSON.parse(cropInfo),
+      weather: weather ? JSON.parse(weather) : {}
+    };
+
+    const report = new DiseaseReport(reportData);
+    await report.save();
+
+    // Analyze image with AI
+    try {
+      const analysisResult = await analyzeDiseaseImage(req.file.path, reportData.cropInfo);
+      
+      report.aiAnalysis = {
+        ...analysisResult,
+        analysisDate: new Date(),
+        modelVersion: '1.0.0',
+        processingTime: analysisResult.processingTime || 0
+      };
+
+      await report.save();
+
+      // Update user statistics
+      await User.findByIdAndUpdate(farmerId, {
+        $inc: { 'statistics.totalDiseaseReports': 1 }
+      });
+
+      res.status(201).json({
+        success: true,
+        message: 'Disease analysis completed',
+        data: { report }
+      });
+
+    } catch (aiError) {
+      console.error('AI analysis error:', aiError);
+      
+      // Save report even if AI analysis fails
+      report.aiAnalysis = {
+        diseaseDetected: false,
+        confidence: 0,
+        analysisDate: new Date(),
+        modelVersion: '1.0.0',
+        processingTime: 0,
+        error: 'Analysis failed, please try again'
+      };
+      
+      await report.save();
+
+      res.status(201).json({
+        success: true,
+        message: 'Image uploaded but analysis failed. Please try again.',
+        data: { report }
+      });
+    }
+
+  } catch (error) {
+    console.error('Analyze disease error:', error);
+    const appError = errorService.handleApiError(error, 'analyzeDisease');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
+    });
+  }
+});
+
+// Update disease report
+router.put('/:id', auth, async (req, res) => {
+  try {
+    const reportId = req.params.id;
+    const farmerId = req.user.id;
+    const updates = req.body;
+
+    // Remove fields that shouldn't be updated directly
+    delete updates.farmerId;
+    delete updates._id;
+    delete updates.image;
+    delete updates.aiAnalysis;
+
+    const report = await DiseaseReport.findOneAndUpdate(
+      { _id: reportId, farmerId },
+      updates,
+      { new: true, runValidators: true }
+    ).populate('farmerId', 'name phone');
+
+    if (!report) {
+      return res.status(404).json({
+        success: false,
+        message: 'Disease report not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Disease report updated successfully',
+      data: { report }
+    });
+
+  } catch (error) {
+    console.error('Update disease report error:', error);
+    const appError = errorService.handleApiError(error, 'updateDiseaseReport');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
+    });
+  }
+});
+
+// Delete disease report
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    const reportId = req.params.id;
+    const farmerId = req.user.id;
+
+    const report = await DiseaseReport.findOneAndDelete({ _id: reportId, farmerId });
+
+    if (!report) {
+      return res.status(404).json({
+        success: false,
+        message: 'Disease report not found'
+      });
+    }
+
+    // Delete associated image file
+    if (report.image && report.image.filename) {
+      const imagePath = `uploads/disease-images/${report.image.filename}`;
+      if (fs.existsSync(imagePath)) {
+        fs.unlinkSync(imagePath);
+      }
+    }
+
+    // Update user statistics
+    await User.findByIdAndUpdate(farmerId, {
+      $inc: { 'statistics.totalDiseaseReports': -1 }
+    });
+
+    res.json({
+      success: true,
+      message: 'Disease report deleted successfully'
+    });
+
+  } catch (error) {
+    console.error('Delete disease report error:', error);
+    const appError = errorService.handleApiError(error, 'deleteDiseaseReport');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
+    });
+  }
+});
+
+// Add expert review
+router.post('/:id/expert-review', auth, async (req, res) => {
+  try {
+    const reportId = req.params.id;
+    const expertId = req.user.id;
+    const { diagnosis, treatment, notes, accuracy } = req.body;
+
+    // Check if user is an expert
+    if (req.user.role !== 'expert' && req.user.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Only experts can provide reviews'
+      });
+    }
+
+    const report = await DiseaseReport.findOne({ _id: reportId });
+    if (!report) {
+      return res.status(404).json({
+        success: false,
+        message: 'Disease report not found'
+      });
+    }
+
+    await report.addExpertReview(expertId, diagnosis, treatment, notes, accuracy);
+
+    res.json({
+      success: true,
+      message: 'Expert review added successfully',
+      data: { report }
+    });
+
+  } catch (error) {
+    console.error('Add expert review error:', error);
+    const appError = errorService.handleApiError(error, 'addExpertReview');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
+    });
+  }
+});
+
+// Schedule follow-up
+router.post('/:id/follow-up', auth, async (req, res) => {
+  try {
+    const reportId = req.params.id;
+    const farmerId = req.user.id;
+    const { date, notes } = req.body;
+
+    if (!date) {
+      return res.status(400).json({
+        success: false,
+        message: 'Follow-up date is required'
+      });
+    }
+
+    const report = await DiseaseReport.findOne({ _id: reportId, farmerId });
+    if (!report) {
+      return res.status(404).json({
+        success: false,
+        message: 'Disease report not found'
+      });
+    }
+
+    await report.scheduleFollowUp(new Date(date), notes);
+
+    res.json({
+      success: true,
+      message: 'Follow-up scheduled successfully',
+      data: { report }
+    });
+
+  } catch (error) {
+    console.error('Schedule follow-up error:', error);
+    const appError = errorService.handleApiError(error, 'scheduleFollowUp');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
+    });
+  }
+});
+
+// Add feedback to report
+router.post('/:id/feedback', auth, async (req, res) => {
+  try {
+    const reportId = req.params.id;
+    const userId = req.user.id;
+    const { rating, comment, helpful } = req.body;
+
+    if (!rating || rating < 1 || rating > 5) {
+      return res.status(400).json({
+        success: false,
+        message: 'Rating must be between 1 and 5'
+      });
+    }
+
+    const report = await DiseaseReport.findOne({ _id: reportId });
+    if (!report) {
+      return res.status(404).json({
+        success: false,
+        message: 'Disease report not found'
+      });
+    }
+
+    await report.addFeedback(userId, rating, comment, helpful);
+
+    res.json({
+      success: true,
+      message: 'Feedback added successfully',
+      data: { report }
+    });
+
+  } catch (error) {
+    console.error('Add feedback error:', error);
+    const appError = errorService.handleApiError(error, 'addFeedback');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
+    });
+  }
+});
+
+// Get public disease reports (for learning)
+router.get('/public/list', async (req, res) => {
+  try {
+    const { 
+      page = 1, 
+      limit = 20, 
+      cropName, 
+      diseaseName,
+      sortBy = 'createdAt',
+      sortOrder = 'desc'
+    } = req.query;
+
+    // Build filter object
+    const filter = { isPublic: true };
+    
+    if (cropName) filter['cropInfo.cropName'] = new RegExp(cropName, 'i');
+    if (diseaseName) filter['aiAnalysis.diseaseName'] = new RegExp(diseaseName, 'i');
+
+    // Build sort object
+    const sort = {};
+    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+
+    const reports = await DiseaseReport.find(filter)
+      .sort(sort)
+      .limit(limit * 1)
+      .skip((page - 1) * limit)
+      .populate('farmerId', 'name')
+      .populate('expertReview.reviewedBy', 'name role')
+      .select('-farmerId -expertReview.reviewedBy')
+      .lean();
+
+    const total = await DiseaseReport.countDocuments(filter);
+
+    res.json({
+      success: true,
+      data: {
+        reports,
+        pagination: {
+          current: parseInt(page),
+          pages: Math.ceil(total / limit),
+          total,
+          limit: parseInt(limit)
+        }
+      }
+    });
+
+  } catch (error) {
+    console.error('Get public disease reports error:', error);
+    const appError = errorService.handleApiError(error, 'getPublicDiseaseReports');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
+    });
+  }
+});
+
+// Get disease statistics
+router.get('/stats/summary', auth, async (req, res) => {
+  try {
+    const farmerId = req.user.id;
+    const { startDate, endDate } = req.query;
+
+    const filter = { farmerId };
+    if (startDate || endDate) {
+      filter.createdAt = {};
+      if (startDate) filter.createdAt.$gte = new Date(startDate);
+      if (endDate) filter.createdAt.$lte = new Date(endDate);
+    }
+
+    const stats = await DiseaseReport.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: null,
+          totalReports: { $sum: 1 },
+          diseasesDetected: {
+            $sum: { $cond: [{ $eq: ['$aiAnalysis.diseaseDetected', true] }, 1, 0] }
+          },
+          expertReviewed: {
+            $sum: { $cond: [{ $ne: ['$expertReview.reviewedBy', null] }, 1, 0] }
+          },
+          totalTreatmentCost: { $sum: '$totalTreatmentCost' },
+          diseasesByCrop: {
+            $push: {
+              cropName: '$cropInfo.cropName',
+              diseaseName: '$aiAnalysis.diseaseName',
+              severity: '$aiAnalysis.severity'
+            }
+          }
+        }
+      }
+    ]);
+
+    const result = stats[0] || {
+      totalReports: 0,
+      diseasesDetected: 0,
+      expertReviewed: 0,
+      totalTreatmentCost: 0,
+      diseasesByCrop: []
+    };
+
+    // Calculate crop-wise statistics
+    const cropStats = {};
+    result.diseasesByCrop.forEach(report => {
+      if (!cropStats[report.cropName]) {
+        cropStats[report.cropName] = {
+          totalReports: 0,
+          diseasesDetected: 0,
+          commonDiseases: {}
+        };
+      }
+      cropStats[report.cropName].totalReports += 1;
+      if (report.diseaseName) {
+        cropStats[report.cropName].diseasesDetected += 1;
+        if (!cropStats[report.cropName].commonDiseases[report.diseaseName]) {
+          cropStats[report.cropName].commonDiseases[report.diseaseName] = 0;
+        }
+        cropStats[report.cropName].commonDiseases[report.diseaseName] += 1;
+      }
+    });
+
+    res.json({
+      success: true,
+      data: {
+        summary: {
+          totalReports: result.totalReports,
+          diseasesDetected: result.diseasesDetected,
+          expertReviewed: result.expertReviewed,
+          totalTreatmentCost: result.totalTreatmentCost,
+          detectionRate: result.totalReports > 0 
+            ? Math.round((result.diseasesDetected / result.totalReports) * 100) 
+            : 0
+        },
+        cropStats
+      }
+    });
+
+  } catch (error) {
+    console.error('Get disease stats error:', error);
+    const appError = errorService.handleApiError(error, 'getDiseaseStats');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
     });
   }
 });

@@ -1,284 +1,171 @@
 import express from 'express';
 import Activity from '../models/Activity.js';
-import { authenticateToken } from '../middleware/auth.js';
+import User from '../models/User.js';
+import { auth } from '../middleware/auth.js';
+import { validationService } from '../utils/validation.js';
+import { errorService } from '../utils/errorService.js';
 
 const router = express.Router();
 
-// Create a new activity
-router.post('/', authenticateToken, async (req, res) => {
+// Get all activities for a farmer
+router.get('/', auth, async (req, res) => {
   try {
-    const farmerId = req.user.userId;
-    const {
-      type,
-      title,
-      description,
-      date,
-      scheduledDate,
-      priority,
-      notes,
-      cost,
-      location,
-      cropId
-    } = req.body;
-
-    if (!type || !title || !description) {
-      return res.status(400).json({
-        success: false,
-        message: 'Type, title, and description are required'
-      });
-    }
-
-    const activity = new Activity({
-      farmerId,
-      cropId,
-      type,
-      title,
-      description,
-      date: new Date(date),
-      scheduledDate: scheduledDate ? new Date(scheduledDate) : null,
-      priority: priority || 'medium',
-      notes,
-      cost,
-      location
-    });
-
-    await activity.save();
-
-    res.status(201).json({
-      success: true,
-      message: 'Activity created successfully',
-      activity
-    });
-
-  } catch (error) {
-    console.error('Create activity error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to create activity'
-    });
-  }
-});
-
-// Get activities for a farmer
-router.get('/', authenticateToken, async (req, res) => {
-  try {
-    const farmerId = req.user.userId;
+    const farmerId = req.user.id;
     const { 
       page = 1, 
       limit = 20, 
-      status, 
       type, 
+      cropName, 
+      status, 
       priority,
       startDate,
       endDate,
-      cropId
+      sortBy = 'date',
+      sortOrder = 'desc'
     } = req.query;
 
-    // Build query
-    let query = { farmerId };
+    // Build filter object
+    const filter = { farmerId };
     
-    if (status) query.status = status;
-    if (type) query.type = type;
-    if (priority) query.priority = priority;
-    if (cropId) query.cropId = cropId;
+    if (type) filter.type = type;
+    if (cropName) filter.cropName = new RegExp(cropName, 'i');
+    if (status) filter.status = status;
+    if (priority) filter.priority = priority;
     
     if (startDate || endDate) {
-      query.date = {};
-      if (startDate) query.date.$gte = new Date(startDate);
-      if (endDate) query.date.$lte = new Date(endDate);
+      filter.date = {};
+      if (startDate) filter.date.$gte = new Date(startDate);
+      if (endDate) filter.date.$lte = new Date(endDate);
     }
 
-    const activities = await Activity.find(query)
-      .sort({ scheduledDate: 1, date: -1 })
-      .limit(limit * 1)
-      .skip((page - 1) * limit);
+    // Build sort object
+    const sort = {};
+    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
 
-    const total = await Activity.countDocuments(query);
+    const activities = await Activity.find(filter)
+      .sort(sort)
+      .limit(limit * 1)
+      .skip((page - 1) * limit)
+      .populate('farmerId', 'name phone')
+      .lean();
+
+    const total = await Activity.countDocuments(filter);
 
     res.json({
       success: true,
-      activities,
-      pagination: {
-        current: parseInt(page),
-        pages: Math.ceil(total / limit),
-        total
+      data: {
+        activities,
+        pagination: {
+          current: parseInt(page),
+          pages: Math.ceil(total / limit),
+          total,
+          limit: parseInt(limit)
+        }
       }
     });
 
   } catch (error) {
     console.error('Get activities error:', error);
+    const appError = errorService.handleApiError(error, 'getActivities');
     res.status(500).json({
       success: false,
-      message: 'Failed to get activities'
+      message: errorService.getUserFriendlyMessage(appError)
     });
   }
 });
 
-// Get activity roadmap/calendar view
-router.get('/roadmap', authenticateToken, async (req, res) => {
+// Get single activity
+router.get('/:id', auth, async (req, res) => {
   try {
-    const farmerId = req.user.userId;
-    const { cropId, startDate, endDate } = req.query;
+    const activityId = req.params.id;
+    const farmerId = req.user.id;
 
-    let query = { farmerId };
-    if (cropId) query.cropId = cropId;
-    
-    if (startDate || endDate) {
-      query.scheduledDate = {};
-      if (startDate) query.scheduledDate.$gte = new Date(startDate);
-      if (endDate) query.scheduledDate.$lte = new Date(endDate);
+    const activity = await Activity.findOne({ _id: activityId, farmerId })
+      .populate('farmerId', 'name phone')
+      .populate('relatedActivities');
+
+    if (!activity) {
+      return res.status(404).json({
+        success: false,
+        message: 'Activity not found'
+      });
     }
-
-    const activities = await Activity.find(query)
-      .sort({ scheduledDate: 1 })
-      .populate('cropId', 'name variety');
-
-    // Group activities by date
-    const roadmap = {};
-    activities.forEach(activity => {
-      const dateKey = activity.scheduledDate?.toISOString().split('T')[0] || 'unscheduled';
-      if (!roadmap[dateKey]) {
-        roadmap[dateKey] = [];
-      }
-      roadmap[dateKey].push(activity);
-    });
-
-    // Calculate statistics
-    const stats = {
-      total: activities.length,
-      completed: activities.filter(a => a.status === 'completed').length,
-      pending: activities.filter(a => a.status === 'pending').length,
-      overdue: activities.filter(a => a.status === 'overdue').length,
-      inProgress: activities.filter(a => a.status === 'in-progress').length
-    };
 
     res.json({
       success: true,
-      roadmap,
-      stats,
-      activities
+      data: { activity }
     });
 
   } catch (error) {
-    console.error('Get roadmap error:', error);
+    console.error('Get activity error:', error);
+    const appError = errorService.handleApiError(error, 'getActivity');
     res.status(500).json({
       success: false,
-      message: 'Failed to get activity roadmap'
+      message: errorService.getUserFriendlyMessage(appError)
     });
   }
 });
 
-// Update activity status
-router.patch('/:id/status', authenticateToken, async (req, res) => {
+// Create new activity
+router.post('/', auth, async (req, res) => {
   try {
-    const { id } = req.params;
-    const { status, notes } = req.body;
-    const farmerId = req.user.userId;
+    const farmerId = req.user.id;
+    const activityData = { ...req.body, farmerId };
 
-    if (!status) {
+    // Validate activity data
+    const validation = validationService.validateActivity(activityData);
+    if (!validation.isValid) {
       return res.status(400).json({
         success: false,
-        message: 'Status is required'
+        message: 'Validation failed',
+        errors: validation.errors
       });
     }
 
-    const activity = await Activity.findOne({ _id: id, farmerId });
-    if (!activity) {
-      return res.status(404).json({
-        success: false,
-        message: 'Activity not found'
-      });
-    }
-
-    activity.status = status;
-    if (notes) activity.notes = notes;
-    
-    // If marking as completed, set completion date
-    if (status === 'completed' && !activity.date) {
-      activity.date = new Date();
-    }
-
+    const activity = new Activity(activityData);
     await activity.save();
 
-    res.json({
+    // Update user statistics
+    await User.findByIdAndUpdate(farmerId, {
+      $inc: { 'statistics.totalActivities': 1 }
+    });
+
+    // Populate the activity for response
+    await activity.populate('farmerId', 'name phone');
+
+    res.status(201).json({
       success: true,
-      message: 'Activity status updated successfully',
-      activity
+      message: 'Activity created successfully',
+      data: { activity }
     });
 
   } catch (error) {
-    console.error('Update activity status error:', error);
+    console.error('Create activity error:', error);
+    const appError = errorService.handleApiError(error, 'createActivity');
     res.status(500).json({
       success: false,
-      message: 'Failed to update activity status'
+      message: errorService.getUserFriendlyMessage(appError)
     });
   }
 });
 
-// Get overdue activities
-router.get('/overdue', authenticateToken, async (req, res) => {
+// Update activity
+router.put('/:id', auth, async (req, res) => {
   try {
-    const farmerId = req.user.userId;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+    const activityId = req.params.id;
+    const farmerId = req.user.id;
+    const updates = req.body;
 
-    const overdueActivities = await Activity.find({
-      farmerId,
-      scheduledDate: { $lt: today },
-      status: { $in: ['pending', 'in-progress'] }
-    }).sort({ scheduledDate: 1 });
+    // Remove fields that shouldn't be updated directly
+    delete updates.farmerId;
+    delete updates._id;
 
-    res.json({
-      success: true,
-      activities: overdueActivities,
-      count: overdueActivities.length
-    });
+    const activity = await Activity.findOneAndUpdate(
+      { _id: activityId, farmerId },
+      updates,
+      { new: true, runValidators: true }
+    ).populate('farmerId', 'name phone');
 
-  } catch (error) {
-    console.error('Get overdue activities error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get overdue activities'
-    });
-  }
-});
-
-// Get upcoming activities (next 7 days)
-router.get('/upcoming', authenticateToken, async (req, res) => {
-  try {
-    const farmerId = req.user.userId;
-    const today = new Date();
-    const nextWeek = new Date();
-    nextWeek.setDate(today.getDate() + 7);
-
-    const upcomingActivities = await Activity.find({
-      farmerId,
-      scheduledDate: { $gte: today, $lte: nextWeek },
-      status: { $in: ['pending', 'in-progress'] }
-    }).sort({ scheduledDate: 1 });
-
-    res.json({
-      success: true,
-      activities: upcomingActivities,
-      count: upcomingActivities.length
-    });
-
-  } catch (error) {
-    console.error('Get upcoming activities error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get upcoming activities'
-    });
-  }
-});
-
-// Delete an activity
-router.delete('/:id', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const farmerId = req.user.userId;
-
-    const activity = await Activity.findOne({ _id: id, farmerId });
     if (!activity) {
       return res.status(404).json({
         success: false,
@@ -286,7 +173,41 @@ router.delete('/:id', authenticateToken, async (req, res) => {
       });
     }
 
-    await Activity.findByIdAndDelete(id);
+    res.json({
+      success: true,
+      message: 'Activity updated successfully',
+      data: { activity }
+    });
+
+  } catch (error) {
+    console.error('Update activity error:', error);
+    const appError = errorService.handleApiError(error, 'updateActivity');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
+    });
+  }
+});
+
+// Delete activity
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    const activityId = req.params.id;
+    const farmerId = req.user.id;
+
+    const activity = await Activity.findOneAndDelete({ _id: activityId, farmerId });
+
+    if (!activity) {
+      return res.status(404).json({
+        success: false,
+        message: 'Activity not found'
+      });
+    }
+
+    // Update user statistics
+    await User.findByIdAndUpdate(farmerId, {
+      $inc: { 'statistics.totalActivities': -1 }
+    });
 
     res.json({
       success: true,
@@ -295,9 +216,215 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 
   } catch (error) {
     console.error('Delete activity error:', error);
+    const appError = errorService.handleApiError(error, 'deleteActivity');
     res.status(500).json({
       success: false,
-      message: 'Failed to delete activity'
+      message: errorService.getUserFriendlyMessage(appError)
+    });
+  }
+});
+
+// Mark activity as completed
+router.patch('/:id/complete', auth, async (req, res) => {
+  try {
+    const activityId = req.params.id;
+    const farmerId = req.user.id;
+
+    const activity = await Activity.findOne({ _id: activityId, farmerId });
+    if (!activity) {
+      return res.status(404).json({
+        success: false,
+        message: 'Activity not found'
+      });
+    }
+
+    await activity.markCompleted();
+
+    res.json({
+      success: true,
+      message: 'Activity marked as completed',
+      data: { activity }
+    });
+
+  } catch (error) {
+    console.error('Complete activity error:', error);
+    const appError = errorService.handleApiError(error, 'completeActivity');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
+    });
+  }
+});
+
+// Update activity progress
+router.patch('/:id/progress', auth, async (req, res) => {
+  try {
+    const activityId = req.params.id;
+    const farmerId = req.user.id;
+    const { percentage } = req.body;
+
+    if (percentage < 0 || percentage > 100) {
+      return res.status(400).json({
+        success: false,
+        message: 'Progress percentage must be between 0 and 100'
+      });
+    }
+
+    const activity = await Activity.findOne({ _id: activityId, farmerId });
+    if (!activity) {
+      return res.status(404).json({
+        success: false,
+        message: 'Activity not found'
+      });
+    }
+
+    await activity.updateProgress(percentage);
+
+    res.json({
+      success: true,
+      message: 'Activity progress updated',
+      data: { activity }
+    });
+
+  } catch (error) {
+    console.error('Update progress error:', error);
+    const appError = errorService.handleApiError(error, 'updateProgress');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
+    });
+  }
+});
+
+// Add reminder to activity
+router.patch('/:id/reminder', auth, async (req, res) => {
+  try {
+    const activityId = req.params.id;
+    const farmerId = req.user.id;
+    const { date, message } = req.body;
+
+    if (!date) {
+      return res.status(400).json({
+        success: false,
+        message: 'Reminder date is required'
+      });
+    }
+
+    const activity = await Activity.findOne({ _id: activityId, farmerId });
+    if (!activity) {
+      return res.status(404).json({
+        success: false,
+        message: 'Activity not found'
+      });
+    }
+
+    await activity.addReminder(new Date(date), message);
+
+    res.json({
+      success: true,
+      message: 'Reminder added successfully',
+      data: { activity }
+    });
+
+  } catch (error) {
+    console.error('Add reminder error:', error);
+    const appError = errorService.handleApiError(error, 'addReminder');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
+    });
+  }
+});
+
+// Get activity statistics
+router.get('/stats/summary', auth, async (req, res) => {
+  try {
+    const farmerId = req.user.id;
+    const { startDate, endDate } = req.query;
+
+    const filter = { farmerId };
+    if (startDate || endDate) {
+      filter.date = {};
+      if (startDate) filter.date.$gte = new Date(startDate);
+      if (endDate) filter.date.$lte = new Date(endDate);
+    }
+
+    const stats = await Activity.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: null,
+          totalActivities: { $sum: 1 },
+          totalCost: { $sum: '$cost' },
+          completedActivities: {
+            $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] }
+          },
+          pendingActivities: {
+            $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] }
+          },
+          inProgressActivities: {
+            $sum: { $cond: [{ $eq: ['$status', 'in_progress'] }, 1, 0] }
+          },
+          activitiesByType: {
+            $push: {
+              type: '$type',
+              cost: '$cost',
+              status: '$status'
+            }
+          }
+        }
+      }
+    ]);
+
+    const result = stats[0] || {
+      totalActivities: 0,
+      totalCost: 0,
+      completedActivities: 0,
+      pendingActivities: 0,
+      inProgressActivities: 0,
+      activitiesByType: []
+    };
+
+    // Calculate type-wise statistics
+    const typeStats = {};
+    result.activitiesByType.forEach(activity => {
+      if (!typeStats[activity.type]) {
+        typeStats[activity.type] = {
+          count: 0,
+          totalCost: 0,
+          completed: 0
+        };
+      }
+      typeStats[activity.type].count += 1;
+      typeStats[activity.type].totalCost += activity.cost || 0;
+      if (activity.status === 'completed') {
+        typeStats[activity.type].completed += 1;
+      }
+    });
+
+    res.json({
+      success: true,
+      data: {
+        summary: {
+          totalActivities: result.totalActivities,
+          totalCost: result.totalCost,
+          completedActivities: result.completedActivities,
+          pendingActivities: result.pendingActivities,
+          inProgressActivities: result.inProgressActivities,
+          completionRate: result.totalActivities > 0 
+            ? Math.round((result.completedActivities / result.totalActivities) * 100) 
+            : 0
+        },
+        typeStats
+      }
+    });
+
+  } catch (error) {
+    console.error('Get activity stats error:', error);
+    const appError = errorService.handleApiError(error, 'getActivityStats');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
     });
   }
 });

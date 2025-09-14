@@ -1,47 +1,193 @@
 import express from 'express';
 import ChatHistory from '../models/ChatHistory.js';
-import { authenticateToken } from '../middleware/auth.js';
-import { generateSessionId } from '../utils/chat.js';
+import User from '../models/User.js';
+import { auth } from '../middleware/auth.js';
+import { validationService } from '../utils/validation.js';
+import { errorService } from '../utils/errorService.js';
+import { processChatMessage } from '../utils/chat.js';
+import { v4 as uuidv4 } from 'uuid';
 
 const router = express.Router();
 
-// Generate a new chat session
-router.post('/session', authenticateToken, async (req, res) => {
+// Get chat history for a farmer
+router.get('/history', auth, async (req, res) => {
   try {
-    const farmerId = req.user.userId;
-    const sessionId = generateSessionId();
-
-    // Create new chat session
-    const chatSession = new ChatHistory({
-      farmerId,
+    const farmerId = req.user.id;
+    const { 
+      page = 1, 
+      limit = 20, 
       sessionId,
-      messages: [],
-      isArchived: false
-    });
+      status,
+      sortBy = 'createdAt',
+      sortOrder = 'desc'
+    } = req.query;
 
-    await chatSession.save();
+    // Build filter object
+    const filter = { farmerId };
+    
+    if (sessionId) filter.sessionId = sessionId;
+    if (status) filter.status = status;
+
+    // Build sort object
+    const sort = {};
+    sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
+
+    const chatHistories = await ChatHistory.find(filter)
+      .sort(sort)
+      .limit(limit * 1)
+      .skip((page - 1) * limit)
+      .populate('farmerId', 'name phone')
+      .lean();
+
+    const total = await ChatHistory.countDocuments(filter);
 
     res.json({
       success: true,
-      message: 'New chat session created',
-      sessionId,
-      chatSession
+      data: {
+        chatHistories,
+        pagination: {
+          current: parseInt(page),
+          pages: Math.ceil(total / limit),
+          total,
+          limit: parseInt(limit)
+        }
+      }
     });
 
   } catch (error) {
-    console.error('Create chat session error:', error);
+    console.error('Get chat history error:', error);
+    const appError = errorService.handleApiError(error, 'getChatHistory');
     res.status(500).json({
       success: false,
-      message: 'Failed to create chat session'
+      message: errorService.getUserFriendlyMessage(appError)
     });
   }
 });
 
-// Send message and get response
-router.post('/message', authenticateToken, async (req, res) => {
+// Get single chat session
+router.get('/session/:sessionId', auth, async (req, res) => {
   try {
-    const farmerId = req.user.userId;
-    const { sessionId, message, language = 'english', type = 'text' } = req.body;
+    const sessionId = req.params.sessionId;
+    const farmerId = req.user.id;
+
+    const chatHistory = await ChatHistory.findOne({ 
+      sessionId: sessionId, 
+      farmerId 
+    }).populate('farmerId', 'name phone');
+
+    if (!chatHistory) {
+      return res.status(404).json({
+        success: false,
+        message: 'Chat session not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      data: { chatHistory }
+    });
+
+  } catch (error) {
+    console.error('Get chat session error:', error);
+    const appError = errorService.handleApiError(error, 'getChatSession');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
+    });
+  }
+});
+
+// Start new chat session
+router.post('/session/start', auth, async (req, res) => {
+  try {
+    const farmerId = req.user.id;
+    const { initialMessage, language = 'en' } = req.body;
+
+    // Create new session
+    const sessionId = uuidv4();
+    const chatHistory = new ChatHistory({
+      farmerId,
+      sessionId,
+      context: {
+        currentTopic: '',
+        previousTopics: [],
+        userPreferences: {
+          language: language,
+          expertise: req.user.role,
+          farmType: req.user.farmDetails?.farmSize ? 'commercial' : 'small'
+        },
+        sessionData: {}
+      },
+      duration: {
+        startTime: new Date()
+      }
+    });
+
+    await chatHistory.save();
+
+    // Add initial message if provided
+    if (initialMessage) {
+      await chatHistory.addMessage('user', {
+        text: initialMessage,
+        type: 'text',
+        language: language
+      });
+
+      // Process the message
+      try {
+        const response = await processChatMessage(initialMessage, {
+          farmerId,
+          sessionId,
+          language,
+          userContext: chatHistory.context
+        });
+
+        await chatHistory.addMessage('assistant', {
+          text: response.text,
+          type: 'text',
+          language: language
+        }, {
+          model: response.model,
+          processingTime: response.processingTime,
+          sources: response.sources,
+          actions: response.actions
+        });
+      } catch (chatError) {
+        console.error('Chat processing error:', chatError);
+        await chatHistory.addMessage('assistant', {
+          text: 'I apologize, but I encountered an error processing your message. Please try again.',
+          type: 'text',
+          language: language
+        }, {
+          error: chatError.message
+        });
+      }
+    }
+
+    res.status(201).json({
+      success: true,
+      message: 'Chat session started successfully',
+      data: { 
+        sessionId,
+        chatHistory 
+      }
+    });
+
+  } catch (error) {
+    console.error('Start chat session error:', error);
+    const appError = errorService.handleApiError(error, 'startChatSession');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
+    });
+  }
+});
+
+// Send message to chat
+router.post('/message', auth, async (req, res) => {
+  try {
+    const farmerId = req.user.id;
+    const { sessionId, message, messageType = 'text', language = 'en' } = req.body;
 
     if (!sessionId || !message) {
       return res.status(400).json({
@@ -50,272 +196,378 @@ router.post('/message', authenticateToken, async (req, res) => {
       });
     }
 
-    // Find or create chat session
-    let chatSession = await ChatHistory.findOne({ 
-      farmerId, 
-      sessionId, 
-      isArchived: false 
+    const chatHistory = await ChatHistory.findOne({ 
+      sessionId: sessionId, 
+      farmerId 
     });
 
-    if (!chatSession) {
-      chatSession = new ChatHistory({
-        farmerId,
-        sessionId,
-        messages: [],
-        isArchived: false
+    if (!chatHistory) {
+      return res.status(404).json({
+        success: false,
+        message: 'Chat session not found'
+      });
+    }
+
+    if (chatHistory.status === 'archived') {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot send message to archived session'
       });
     }
 
     // Add user message
-    chatSession.messages.push({
-      role: 'user',
-      content: message,
-      language,
-      type
+    await chatHistory.addMessage('user', {
+      text: message,
+      type: messageType,
+      language: language
     });
 
-    // Generate AI response (mock implementation)
-    const aiResponse = await generateAIResponse(message, language, farmerId);
-    
-    // Add AI response
-    chatSession.messages.push({
-      role: 'assistant',
-      content: aiResponse.content,
-      language,
-      type: 'text',
-      metadata: aiResponse.metadata
-    });
+    // Process the message
+    try {
+      const response = await processChatMessage(message, {
+        farmerId,
+        sessionId,
+        language,
+        userContext: chatHistory.context,
+        messageType
+      });
 
-    chatSession.lastAccessed = new Date();
-    await chatSession.save();
+      // Add assistant response
+      await chatHistory.addMessage('assistant', {
+        text: response.text,
+        type: 'text',
+        language: language
+      }, {
+        model: response.model,
+        processingTime: response.processingTime,
+        sources: response.sources,
+        actions: response.actions,
+        confidence: response.confidence
+      });
 
-    res.json({
-      success: true,
-      message: 'Message processed successfully',
-      response: {
-        content: aiResponse.content,
-        metadata: aiResponse.metadata
-      },
-      sessionId
-    });
+      res.json({
+        success: true,
+        message: 'Message processed successfully',
+        data: { 
+          response: response.text,
+          sources: response.sources,
+          actions: response.actions,
+          chatHistory 
+        }
+      });
+
+    } catch (chatError) {
+      console.error('Chat processing error:', chatError);
+      
+      // Add error response
+      await chatHistory.addMessage('assistant', {
+        text: 'I apologize, but I encountered an error processing your message. Please try again.',
+        type: 'text',
+        language: language
+      }, {
+        error: chatError.message
+      });
+
+      res.status(500).json({
+        success: false,
+        message: 'Failed to process message',
+        data: { 
+          response: 'I apologize, but I encountered an error processing your message. Please try again.',
+          chatHistory 
+        }
+      });
+    }
 
   } catch (error) {
     console.error('Send message error:', error);
+    const appError = errorService.handleApiError(error, 'sendMessage');
     res.status(500).json({
       success: false,
-      message: 'Failed to process message'
+      message: errorService.getUserFriendlyMessage(appError)
     });
   }
 });
 
-// Get chat history for a session
-router.get('/session/:sessionId', authenticateToken, async (req, res) => {
+// End chat session
+router.post('/session/:sessionId/end', auth, async (req, res) => {
   try {
-    const farmerId = req.user.userId;
-    const { sessionId } = req.params;
+    const sessionId = req.params.sessionId;
+    const farmerId = req.user.id;
 
-    const chatSession = await ChatHistory.findOne({ 
-      farmerId, 
-      sessionId, 
-      isArchived: false 
+    const chatHistory = await ChatHistory.findOne({ 
+      sessionId: sessionId, 
+      farmerId 
     });
 
-    if (!chatSession) {
+    if (!chatHistory) {
       return res.status(404).json({
         success: false,
         message: 'Chat session not found'
       });
     }
 
-    chatSession.lastAccessed = new Date();
-    await chatSession.save();
+    await chatHistory.endSession();
 
     res.json({
       success: true,
-      chatSession
+      message: 'Chat session ended successfully',
+      data: { chatHistory }
     });
 
   } catch (error) {
-    console.error('Get chat session error:', error);
+    console.error('End chat session error:', error);
+    const appError = errorService.handleApiError(error, 'endChatSession');
     res.status(500).json({
       success: false,
-      message: 'Failed to get chat session'
+      message: errorService.getUserFriendlyMessage(appError)
     });
   }
 });
 
-// Get all chat sessions for a farmer
-router.get('/sessions', authenticateToken, async (req, res) => {
+// Add satisfaction rating
+router.post('/session/:sessionId/rating', auth, async (req, res) => {
   try {
-    const farmerId = req.user.userId;
-    const { page = 1, limit = 10 } = req.query;
+    const sessionId = req.params.sessionId;
+    const farmerId = req.user.id;
+    const { rating, feedback = '' } = req.body;
 
-    const sessions = await ChatHistory.find({ 
-      farmerId, 
-      isArchived: false 
-    })
-    .sort({ lastAccessed: -1 })
-    .limit(limit * 1)
-    .skip((page - 1) * limit)
-    .select('sessionId createdAt lastAccessed messages');
+    if (!rating || rating < 1 || rating > 5) {
+      return res.status(400).json({
+        success: false,
+        message: 'Rating must be between 1 and 5'
+      });
+    }
 
-    const total = await ChatHistory.countDocuments({ 
-      farmerId, 
-      isArchived: false 
+    const chatHistory = await ChatHistory.findOne({ 
+      sessionId: sessionId, 
+      farmerId 
     });
 
-    res.json({
-      success: true,
-      sessions,
-      pagination: {
-        current: parseInt(page),
-        pages: Math.ceil(total / limit),
-        total
-      }
-    });
-
-  } catch (error) {
-    console.error('Get chat sessions error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to get chat sessions'
-    });
-  }
-});
-
-// Archive a chat session
-router.patch('/session/:sessionId/archive', authenticateToken, async (req, res) => {
-  try {
-    const farmerId = req.user.userId;
-    const { sessionId } = req.params;
-
-    const chatSession = await ChatHistory.findOne({ 
-      farmerId, 
-      sessionId 
-    });
-
-    if (!chatSession) {
+    if (!chatHistory) {
       return res.status(404).json({
         success: false,
         message: 'Chat session not found'
       });
     }
 
-    chatSession.isArchived = true;
-    await chatSession.save();
+    await chatHistory.addSatisfactionRating(rating, feedback);
 
     res.json({
       success: true,
-      message: 'Chat session archived successfully'
+      message: 'Rating added successfully',
+      data: { chatHistory }
+    });
+
+  } catch (error) {
+    console.error('Add rating error:', error);
+    const appError = errorService.handleApiError(error, 'addRating');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
+    });
+  }
+});
+
+// Archive chat session
+router.post('/session/:sessionId/archive', auth, async (req, res) => {
+  try {
+    const sessionId = req.params.sessionId;
+    const farmerId = req.user.id;
+
+    const chatHistory = await ChatHistory.findOne({ 
+      sessionId: sessionId, 
+      farmerId 
+    });
+
+    if (!chatHistory) {
+      return res.status(404).json({
+        success: false,
+        message: 'Chat session not found'
+      });
+    }
+
+    await chatHistory.archiveSession();
+
+    res.json({
+      success: true,
+      message: 'Chat session archived successfully',
+      data: { chatHistory }
     });
 
   } catch (error) {
     console.error('Archive chat session error:', error);
+    const appError = errorService.handleApiError(error, 'archiveChatSession');
     res.status(500).json({
       success: false,
-      message: 'Failed to archive chat session'
+      message: errorService.getUserFriendlyMessage(appError)
     });
   }
 });
 
-// Delete a chat session
-router.delete('/session/:sessionId', authenticateToken, async (req, res) => {
+// Get chat statistics
+router.get('/stats/summary', auth, async (req, res) => {
   try {
-    const farmerId = req.user.userId;
-    const { sessionId } = req.params;
+    const farmerId = req.user.id;
+    const { startDate, endDate } = req.query;
 
-    const result = await ChatHistory.deleteOne({ 
-      farmerId, 
-      sessionId 
-    });
-
-    if (result.deletedCount === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'Chat session not found'
-      });
+    const filter = { farmerId };
+    if (startDate || endDate) {
+      filter.createdAt = {};
+      if (startDate) filter.createdAt.$gte = new Date(startDate);
+      if (endDate) filter.createdAt.$lte = new Date(endDate);
     }
+
+    const stats = await ChatHistory.aggregate([
+      { $match: filter },
+      {
+        $group: {
+          _id: null,
+          totalSessions: { $sum: 1 },
+          totalMessages: { $sum: { $size: '$messages' } },
+          completedSessions: {
+            $sum: { $cond: [{ $eq: ['$status', 'completed'] }, 1, 0] }
+          },
+          activeSessions: {
+            $sum: { $cond: [{ $eq: ['$status', 'active'] }, 1, 0] }
+          },
+          archivedSessions: {
+            $sum: { $cond: [{ $eq: ['$status', 'archived'] }, 1, 0] }
+          },
+          averageRating: { $avg: '$satisfaction.rating' },
+          totalDuration: { $sum: '$duration.totalMinutes' },
+          topics: {
+            $push: '$context.previousTopics'
+          }
+        }
+      }
+    ]);
+
+    const result = stats[0] || {
+      totalSessions: 0,
+      totalMessages: 0,
+      completedSessions: 0,
+      activeSessions: 0,
+      archivedSessions: 0,
+      averageRating: 0,
+      totalDuration: 0,
+      topics: []
+    };
+
+    // Calculate topic frequency
+    const topicFrequency = {};
+    result.topics.forEach(topicArray => {
+      topicArray.forEach(topic => {
+        topicFrequency[topic] = (topicFrequency[topic] || 0) + 1;
+      });
+    });
 
     res.json({
       success: true,
-      message: 'Chat session deleted successfully'
+      data: {
+        summary: {
+          totalSessions: result.totalSessions,
+          totalMessages: result.totalMessages,
+          completedSessions: result.completedSessions,
+          activeSessions: result.activeSessions,
+          archivedSessions: result.archivedSessions,
+          averageRating: Math.round(result.averageRating * 10) / 10,
+          totalDuration: result.totalDuration,
+          averageSessionDuration: result.totalSessions > 0 
+            ? Math.round(result.totalDuration / result.totalSessions) 
+            : 0
+        },
+        topicFrequency
+      }
     });
 
   } catch (error) {
-    console.error('Delete chat session error:', error);
+    console.error('Get chat stats error:', error);
+    const appError = errorService.handleApiError(error, 'getChatStats');
     res.status(500).json({
       success: false,
-      message: 'Failed to delete chat session'
+      message: errorService.getUserFriendlyMessage(appError)
     });
   }
 });
 
-// Mock AI Response Generator
-const generateAIResponse = async (message, language, farmerId) => {
+// Get quick responses (common questions)
+router.get('/quick-responses', auth, async (req, res) => {
   try {
-    // In production, this would integrate with OpenAI, Claude, or custom AI model
-    const responses = {
-      english: {
-        greeting: "Hello! I'm your farming assistant. How can I help you today?",
-        weather: "The current weather conditions are favorable for farming activities. Temperature is around 28°C with moderate humidity.",
-        pest: "Based on current conditions, watch out for common pests like aphids and whiteflies. Consider organic treatments first.",
-        crop: "For better crop yield, ensure proper spacing, adequate watering, and timely fertilization.",
-        default: "I understand your question about farming. Let me provide you with relevant information and recommendations."
+    const { language = 'en', category } = req.query;
+
+    const quickResponses = {
+      en: {
+        general: [
+          "What's the weather forecast for today?",
+          "Show me market prices for vegetables",
+          "How to prepare soil for planting?",
+          "What are the latest government schemes?"
+        ],
+        crop_disease: [
+          "My crop has yellow spots on leaves",
+          "How to treat fungal infections?",
+          "What causes wilting in plants?",
+          "How to prevent pest attacks?"
+        ],
+        fertilizer: [
+          "When to apply nitrogen fertilizer?",
+          "What's the best organic fertilizer?",
+          "How much fertilizer per acre?",
+          "NPK ratio for rice cultivation"
+        ],
+        irrigation: [
+          "How often to water vegetables?",
+          "Best irrigation method for rice?",
+          "Water requirements for different crops",
+          "How to check soil moisture?"
+        ]
       },
-      malayalam: {
-        greeting: "നമസ്കാരം! ഞാൻ നിങ്ങളുടെ കാർഷിക സഹായിയാണ്. ഇന്ന് എങ്ങനെ സഹായിക്കാം?",
-        weather: "നിലവിലെ കാലാവസ്ഥ കാർഷിക പ്രവർത്തനങ്ങൾക്ക് അനുകൂലമാണ്. താപനില 28°C ആണ്.",
-        pest: "നിലവിലെ അവസ്ഥകൾ അനുസരിച്ച്, ആഫിഡുകളും വൈറ്റ്ഫ്ലൈകളും പോലുള്ള പൊതുവായ കീടങ്ങളിൽ നിന്ന് സൂക്ഷിക്കുക.",
-        crop: "മികച്ച വിളവിനായി, ശരിയായ ഇടവിട്ട്, മതിയായ നനയൽ, സമയത്ത് വളപ്രയോഗം ഉറപ്പാക്കുക.",
-        default: "കാർഷികവിഷയത്തെക്കുറിച്ചുള്ള നിങ്ങളുടെ ചോദ്യം ഞാൻ മനസ്സിലാക്കുന്നു."
+      hi: {
+        general: [
+          "आज का मौसम कैसा है?",
+          "सब्जियों की बाजार कीमतें दिखाएं",
+          "बुवाई के लिए मिट्टी कैसे तैयार करें?",
+          "नवीनतम सरकारी योजनाएं क्या हैं?"
+        ],
+        crop_disease: [
+          "मेरी फसल की पत्तियों पर पीले धब्बे हैं",
+          "फंगल संक्रमण का इलाज कैसे करें?",
+          "पौधों में मुरझाने का कारण क्या है?",
+          "कीट हमलों से कैसे बचें?"
+        ]
+      },
+      ml: {
+        general: [
+          "ഇന്നത്തെ കാലാവസ്ഥ എങ്ങനെയാണ്?",
+          "പച്ചക്കറികളുടെ വിപണി വിലകൾ കാണിക്കുക",
+          "വിത്തിടാനായി മണ്ണ് എങ്ങനെ തയ്യാറാക്കാം?",
+          "ഏറ്റവും പുതിയ സർക്കാർ പദ്ധതികൾ എന്തൊക്കെയാണ്?"
+        ],
+        crop_disease: [
+          "എന്റെ വിളയുടെ ഇലകളിൽ മഞ്ഞ പുള്ളികൾ ഉണ്ട്",
+          "ഫംഗൽ അണുബാധയുടെ ചികിത്സ എങ്ങനെ?",
+          "ചെടികളിൽ വാട്ടം വരുന്നതിന്റെ കാരണം എന്താണ്?",
+          "കീട ആക്രമണങ്ങളിൽ നിന്ന് എങ്ങനെ സംരക്ഷിക്കാം?"
+        ]
       }
     };
 
-    const langResponses = responses[language] || responses.english;
-    
-    // Simple keyword matching for demo
-    let response = langResponses.default;
-    const lowerMessage = message.toLowerCase();
-    
-    if (lowerMessage.includes('hello') || lowerMessage.includes('hi') || lowerMessage.includes('നമസ്കാരം')) {
-      response = langResponses.greeting;
-    } else if (lowerMessage.includes('weather') || lowerMessage.includes('കാലാവസ്ഥ')) {
-      response = langResponses.weather;
-    } else if (lowerMessage.includes('pest') || lowerMessage.includes('കീടം')) {
-      response = langResponses.pest;
-    } else if (lowerMessage.includes('crop') || lowerMessage.includes('വിള')) {
-      response = langResponses.crop;
-    }
+    const responses = quickResponses[language] || quickResponses.en;
+    const categoryResponses = category ? responses[category] : Object.values(responses).flat();
 
-    // Mock metadata for real-time data
-    const metadata = {
-      weatherData: {
-        temperature: 28,
-        humidity: 65,
-        condition: 'sunny'
-      },
-      marketData: {
-        rice: { price: 45, trend: 'up' },
-        coconut: { price: 12, trend: 'stable' }
-      },
-      pestAlerts: [],
-      governmentAdvisories: []
-    };
-
-    return {
-      content: response,
-      metadata
-    };
+    res.json({
+      success: true,
+      data: { quickResponses: categoryResponses }
+    });
 
   } catch (error) {
-    console.error('AI Response generation error:', error);
-    return {
-      content: language === 'malayalam' 
-        ? 'ക്ഷമിക്കണം, ഞാൻ നിങ്ങളുടെ ചോദ്യം മനസ്സിലാക്കാൻ കഴിഞ്ഞില്ല. വീണ്ടും ശ്രമിക്കുക.'
-        : 'Sorry, I couldn\'t understand your question. Please try again.',
-      metadata: {}
-    };
+    console.error('Get quick responses error:', error);
+    const appError = errorService.handleApiError(error, 'getQuickResponses');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
+    });
   }
-};
+});
 
 export default router;

@@ -1,318 +1,335 @@
-import React, { useState } from 'react';
-import { MessageSquare, Calendar, Clock } from 'lucide-react';
-import Header from './components/Header';
-import Navigation from './components/Navigation';
-import Dashboard from './components/Dashboard';
-import ChatInterface from './components/ChatInterface';
-import EnhancedChatbot from './components/EnhancedChatbot';
-import ActivityLogger from './components/ActivityLogger';
-import MarketPrices from './components/MarketPrices';
-import KnowledgeBase from './components/KnowledgeBase';
-import FarmerProfile from './components/FarmerProfile';
-import CropCalendar from './components/CropCalendar';
-import ActivityTracking from './components/ActivityTracking';
-import ProgressTracker from './components/ProgressTracker';
-import SchemeAlerts from './components/SchemeAlerts';
-import WeatherAlerts from './components/WeatherAlerts';
-import GovernmentSchemes from './components/GovernmentSchemes';
-import NotificationCenter from './components/NotificationCenter';
-import CropDiagnosis from './components/CropDiagnosis';
-import CropDoctor from './components/CropDoctor';
-import CommunityForum from './components/CommunityForum';
-import AuthPage from './components/AuthPage';
-import EmptyState from './components/EmptyState';
-import ErrorBoundary from './components/ErrorBoundary';
-import { sampleFarmers, getFarmerData, setCurrentFarmer } from './data/mockData';
-import { Activity, Advisory, Farmer } from './types/farmer';
-import { validationService } from './services/validationService';
-import { errorService } from './services/errorService';
+import React, { useState, useEffect } from 'react';
+import { NavigationContainer } from '@react-navigation/native';
+import { createStackNavigator } from '@react-navigation/stack';
+import { createDrawerNavigator } from '@react-navigation/drawer';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { StatusBar, Alert, BackHandler } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import Icon from 'react-native-vector-icons/MaterialIcons';
 
-function App() {
+// Import screens
+import AuthScreen from './src/screens/AuthScreen';
+import DashboardScreen from './src/screens/DashboardScreen';
+import CropDoctorScreen from './src/screens/CropDoctorScreen';
+import CommunityScreen from './src/screens/CommunityScreen';
+import ChatScreen from './src/screens/ChatScreen';
+import ActivityTrackingScreen from './src/screens/ActivityTrackingScreen';
+import CropCalendarScreen from './src/screens/CropCalendarScreen';
+import WeatherAlertsScreen from './src/screens/WeatherAlertsScreen';
+import GovernmentSchemesScreen from './src/screens/GovernmentSchemesScreen';
+import KnowledgeBaseScreen from './src/screens/KnowledgeBaseScreen';
+import ProfileScreen from './src/screens/ProfileScreen';
+import SettingsScreen from './src/screens/SettingsScreen';
+
+// Import knowledge base components
+import KnowledgeBase from './src/components/KnowledgeBase';
+import KnowledgeDetail from './src/components/KnowledgeDetail';
+import AddKnowledge from './src/components/AddKnowledge';
+
+// Import crop calendar components
+import CropCalendar from './src/components/CropCalendar';
+import ActivityDetail from './src/components/ActivityDetail';
+import AddActivity from './src/components/AddActivity';
+
+// Import alerts system components
+import WeatherAlerts from './src/components/WeatherAlerts';
+import GovernmentSchemes from './src/components/GovernmentSchemes';
+import NotificationSettings from './src/components/NotificationSettings';
+
+// Import error handling components
+import ErrorBoundary from './src/components/ErrorBoundary';
+import NetworkStatus from './src/components/NetworkStatus';
+import RetryComponent from './src/components/RetryComponent';
+
+// Import chatbot components
+import Chatbot from './src/components/Chatbot';
+import VoiceMessage from './src/components/VoiceMessage';
+
+// Import services
+import { authService } from './src/services/authService';
+import { errorService } from './src/services/errorService';
+
+const Stack = createStackNavigator();
+const Drawer = createDrawerNavigator();
+const Tab = createBottomTabNavigator();
+
+// Main Tab Navigator
+const TabNavigator = () => {
+  return (
+    <Tab.Navigator
+      screenOptions={({ route }) => ({
+        tabBarIcon: ({ focused, color, size }) => {
+          let iconName;
+
+          switch (route.name) {
+            case 'Dashboard':
+              iconName = 'home';
+              break;
+            case 'CropDoctor':
+              iconName = 'camera-alt';
+              break;
+            case 'Community':
+              iconName = 'people';
+              break;
+            case 'Chat':
+              iconName = 'chat';
+              break;
+            case 'Calendar':
+              iconName = 'calendar-today';
+              break;
+            default:
+              iconName = 'help';
+          }
+
+          return <Icon name={iconName} size={size} color={color} />;
+        },
+        tabBarActiveTintColor: '#2d5016',
+        tabBarInactiveTintColor: 'gray',
+        tabBarStyle: {
+          backgroundColor: 'white',
+          borderTopWidth: 1,
+          borderTopColor: '#e0e0e0',
+          paddingBottom: 5,
+          paddingTop: 5,
+          height: 60,
+        },
+        headerShown: false,
+      })}
+    >
+      <Tab.Screen 
+        name="Dashboard" 
+        component={DashboardScreen}
+        options={{ title: 'Home' }}
+      />
+      <Tab.Screen 
+        name="CropDoctor" 
+        component={CropDoctorScreen}
+        options={{ title: 'Crop Doctor' }}
+      />
+      <Tab.Screen 
+        name="Community" 
+        component={CommunityScreen}
+        options={{ title: 'Community' }}
+      />
+      <Tab.Screen 
+        name="Chat" 
+        component={ChatScreen}
+        options={{ title: 'Chat' }}
+      />
+      <Tab.Screen 
+        name="Calendar" 
+        component={CropCalendarScreen}
+        options={{ title: 'Calendar' }}
+      />
+    </Tab.Navigator>
+  );
+};
+
+// Drawer Navigator
+const DrawerNavigator = () => {
+  return (
+    <Drawer.Navigator
+      screenOptions={{
+        headerStyle: {
+          backgroundColor: '#2d5016',
+        },
+        headerTintColor: '#fff',
+        headerTitleStyle: {
+          fontWeight: 'bold',
+        },
+        drawerStyle: {
+          backgroundColor: '#f8f9fa',
+        },
+        drawerActiveTintColor: '#2d5016',
+        drawerInactiveTintColor: '#666',
+      }}
+    >
+      <Drawer.Screen 
+        name="MainTabs" 
+        component={TabNavigator}
+        options={{
+          title: 'Krishi Sakhi',
+          drawerIcon: ({ color, size }) => (
+            <Icon name="agriculture" size={size} color={color} />
+          ),
+        }}
+      />
+      <Drawer.Screen 
+        name="WeatherAlerts" 
+        component={WeatherAlertsScreen}
+        options={{
+          title: 'Weather Alerts',
+          drawerIcon: ({ color, size }) => (
+            <Icon name="wb-sunny" size={size} color={color} />
+          ),
+        }}
+      />
+      <Drawer.Screen 
+        name="GovernmentSchemes" 
+        component={GovernmentSchemesScreen}
+        options={{
+          title: 'Govt Schemes',
+          drawerIcon: ({ color, size }) => (
+            <Icon name="account-balance" size={size} color={color} />
+          ),
+        }}
+      />
+      <Drawer.Screen 
+        name="KnowledgeBase" 
+        component={KnowledgeBaseScreen}
+        options={{
+          title: 'Knowledge Base',
+          drawerIcon: ({ color, size }) => (
+            <Icon name="library-books" size={size} color={color} />
+          ),
+        }}
+      />
+      <Drawer.Screen 
+        name="ActivityTracking" 
+        component={ActivityTrackingScreen}
+        options={{
+          title: 'Activity Tracking',
+          drawerIcon: ({ color, size }) => (
+            <Icon name="track-changes" size={size} color={color} />
+          ),
+        }}
+      />
+      <Drawer.Screen 
+        name="Profile" 
+        component={ProfileScreen}
+        options={{
+          title: 'Profile',
+          drawerIcon: ({ color, size }) => (
+            <Icon name="person" size={size} color={color} />
+          ),
+        }}
+      />
+      <Drawer.Screen 
+        name="Settings" 
+        component={SettingsScreen}
+        options={{
+          title: 'Settings',
+          drawerIcon: ({ color, size }) => (
+            <Icon name="settings" size={size} color={color} />
+          ),
+        }}
+      />
+    </Drawer.Navigator>
+  );
+};
+
+const App = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [activeTab, setActiveTab] = useState('dashboard');
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const [isChatOpen, setIsChatOpen] = useState(false);
-  const [isNotificationOpen, setIsNotificationOpen] = useState(false);
-  const [isWeatherOpen, setIsWeatherOpen] = useState(false);
-  const [isActivityLoggerOpen, setIsActivityLoggerOpen] = useState(false);
-  const [isCropDiagnosisOpen, setIsCropDiagnosisOpen] = useState(false);
-  const [isCommunityOpen, setIsCommunityOpen] = useState(false);
-  const [farmer, setFarmer] = useState<Farmer>(sampleFarmers[0]);
-  const [currentFarmerData, setCurrentFarmerData] = useState(getFarmerData('1'));
-  const [activities, setActivities] = useState<Activity[]>(currentFarmerData.activities);
+  const [isLoading, setIsLoading] = useState(true);
+  const [user, setUser] = useState(null);
 
-  const handleLogin = (loggedInFarmer: Farmer) => {
-    setCurrentFarmer(loggedInFarmer.id);
-    const farmerData = getFarmerData(loggedInFarmer.id);
-    setCurrentFarmerData(farmerData);
-    setActivities(farmerData.activities);
-    setFarmer(loggedInFarmer);
-    setIsAuthenticated(true);
-  };
+  useEffect(() => {
+    checkAuthStatus();
+    
+    // Handle back button on Android
+    const backHandler = BackHandler.addEventListener('hardwareBackPress', () => {
+      // You can add custom back button handling here
+      return false; // Let the default behavior happen
+    });
 
-  const handleLogout = () => {
-    setIsAuthenticated(false);
-    setFarmer(sampleFarmers[0]);
-    setCurrentFarmerData(getFarmerData('1'));
-    setActivities(getFarmerData('1').activities);
-    setActiveTab('dashboard');
-  };
+    return () => backHandler.remove();
+  }, []);
 
-  const handleQuickAction = (action: string) => {
-    switch (action) {
-      case 'log-activity':
-        setIsActivityLoggerOpen(true);
-        break;
-      case 'view-calendar':
-        setActiveTab('knowledge');
-        break;
-      case 'market-prices':
-        setActiveTab('market');
-        break;
-      case 'weather-alerts':
-        setIsNotificationOpen(true);
-        break;
-      case 'offline-mode':
-        alert('Offline mode feature would be implemented here for areas with poor connectivity');
-        break;
-      case 'take-photo':
-        // In a real app, this would open camera
-        alert('Camera feature would be implemented here');
-        break;
-      case 'view-reports':
-        alert('Reports feature would be implemented here');
-        break;
-      case 'settings':
-        alert('Settings feature would be implemented here');
-        break;
-      case 'crop-doctor':
-        setIsCropDiagnosisOpen(true);
-        break;
-      case 'community':
-        setIsCommunityOpen(true);
-        break;
-      default:
-        break;
-    }
-  };
-
-  const handleSaveActivity = (newActivity: Omit<Activity, 'id' | 'farmerId'>) => {
+  const checkAuthStatus = async () => {
     try {
-      // Validate activity data
-      const validation = validationService.validateActivity(newActivity);
-      if (!validation.isValid) {
-        const error = errorService.createError(
-          'VALIDATION_ERROR',
-          validation.errors.join(', '),
-          validation.errors
-        );
-        alert(errorService.getUserFriendlyMessage(error));
-        return;
+      const token = await AsyncStorage.getItem('authToken');
+      const userData = await AsyncStorage.getItem('userData');
+      
+      if (token && userData) {
+        // Verify token with server
+        const isValid = await authService.verifyToken(token);
+        if (isValid) {
+          setUser(JSON.parse(userData));
+          setIsAuthenticated(true);
+        } else {
+          // Clear invalid data
+          await AsyncStorage.multiRemove(['authToken', 'userData']);
+        }
       }
-
-      const activity: Activity = {
-        ...newActivity,
-        id: Date.now().toString(),
-        farmerId: farmer.id
-      };
-      setActivities(prev => [activity, ...prev]);
     } catch (error) {
-      console.error('Error saving activity:', error);
-      const appError = errorService.handleApiError(error, 'handleSaveActivity');
-      alert(errorService.getUserFriendlyMessage(appError));
+      console.error('Auth check error:', error);
+      errorService.handleError(error, 'checkAuthStatus');
+    } finally {
+      setIsLoading(false);
     }
   };
 
-  const handleAdvisoryAction = (advisory: Advisory) => {
-    // In a real app, this would handle specific actions for each advisory
-    alert(`Taking action for: ${advisory.title}`);
-  };
-
-  const renderContent = () => {
-    switch (activeTab) {
-      case 'dashboard':
-        return (
-          <Dashboard
-            farm={currentFarmerData.farm}
-            activities={activities}
-            advisories={currentFarmerData.advisories}
-            onQuickAction={handleQuickAction}
-            onAdvisoryAction={handleAdvisoryAction}
-            onEditFarm={() => alert('Farm edit feature would be implemented here')}
-          />
-        );
-      case 'chat':
-        return <EnhancedChatbot onBack={() => setActiveTab('dashboard')} />;
-      case 'activity-tracking':
-        return <ActivityTracking onBack={() => setActiveTab('dashboard')} />;
-      case 'market':
-        return <MarketPrices onBack={() => setActiveTab('dashboard')} />;
-      case 'profile':
-        return <FarmerProfile farmer={farmer} onUpdate={setFarmer} onBack={() => setActiveTab('dashboard')} />;
-      case 'farm':
-        return <CropCalendar onBack={() => setActiveTab('dashboard')} />;
-      case 'progress':
-        return <ProgressTracker activities={activities} crops={currentFarmerData.farm.crops} />;
-      case 'weather-alerts':
-        return <WeatherAlerts onBack={() => setActiveTab('dashboard')} />;
-      case 'government-schemes':
-        return <GovernmentSchemes onBack={() => setActiveTab('dashboard')} />;
-      case 'knowledge':
-        return <KnowledgeBase onBack={() => setActiveTab('dashboard')} />;
-      case 'crop-doctor':
-        return <CropDoctor onBack={() => setActiveTab('dashboard')} />;
-      case 'community':
-        return <CommunityForum onBack={() => setActiveTab('dashboard')} />;
-      case 'activities':
-        return (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h2 className="text-2xl font-bold text-gray-900">Farm Activities</h2>
-                <p className="text-gray-600">Track all your farming activities</p>
-              </div>
-              <button
-                onClick={() => setIsActivityLoggerOpen(true)}
-                className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
-              >
-                Log New Activity
-              </button>
-            </div>
-            
-            <div className="space-y-4">
-              {activities.length > 0 ? activities.map((activity) => (
-                <div key={activity.id} className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
-                  <div className="flex items-start space-x-3">
-                    <div className="p-2 bg-gray-50 rounded-lg">
-                      <Calendar className="h-5 w-5 text-gray-600" />
-                    </div>
-                    <div className="flex-1">
-                      <div className="flex items-center justify-between mb-2">
-                        <h4 className="font-semibold text-gray-900 capitalize">{activity.type}</h4>
-                        <span className="text-sm text-gray-500">
-                          {new Date(activity.date).toLocaleDateString()}
-                        </span>
-                      </div>
-                      <p className="text-gray-700 mb-2">{activity.description}</p>
-                      {activity.notes && (
-                        <p className="text-sm text-gray-600 italic mb-2">{activity.notes}</p>
-                      )}
-                      {activity.cost && (
-                        <div className="text-sm text-green-700 font-medium">
-                          Cost: ₹{activity.cost.toLocaleString()}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              )) : (
-                <EmptyState
-                  icon={Clock}
-                  title="No Activities Yet"
-                  description="Start logging your farming activities to track progress"
-                  actionLabel="Log First Activity"
-                  onAction={() => setIsActivityLoggerOpen(true)}
-                />
-              )}
-            </div>
-          </div>
-        );
-      default:
-        return (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-12 text-center">
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">
-              {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} Feature
-            </h3>
-            <p className="text-gray-600">
-              This feature would be implemented with full functionality in the production version.
-            </p>
-          </div>
-        );
+  const handleLogin = async (userData, token) => {
+    try {
+      await AsyncStorage.setItem('authToken', token);
+      await AsyncStorage.setItem('userData', JSON.stringify(userData));
+      
+      setUser(userData);
+      setIsAuthenticated(true);
+    } catch (error) {
+      console.error('Login error:', error);
+      errorService.handleError(error, 'handleLogin');
+      Alert.alert('Error', 'Failed to save login data');
     }
   };
 
-  if (!isAuthenticated) {
+  const handleLogout = async () => {
+    try {
+      await AsyncStorage.multiRemove(['authToken', 'userData']);
+      setUser(null);
+      setIsAuthenticated(false);
+    } catch (error) {
+      console.error('Logout error:', error);
+      errorService.handleError(error, 'handleLogout');
+    }
+  };
+
+  if (isLoading) {
     return (
-      <ErrorBoundary>
-        <AuthPage onLogin={handleLogin} sampleFarmers={sampleFarmers} />
-      </ErrorBoundary>
+      <StatusBar 
+        backgroundColor="#2d5016" 
+        barStyle="light-content" 
+      />
     );
   }
 
   return (
     <ErrorBoundary>
-      <div className="min-h-screen bg-gray-50">
-      <Header
-        farmerName={farmer.name}
-        onLogout={handleLogout}
-        onMenuClick={() => setIsMenuOpen(true)}
-        onChatClick={() => setIsChatOpen(true)}
-        onNotificationClick={() => setIsNotificationOpen(true)}
-        onWeatherClick={() => setIsWeatherOpen(true)}
-        unreadNotifications={currentFarmerData.advisories.filter(a => a.actionRequired).length}
-      />
-      
-      <Navigation
-        isOpen={isMenuOpen}
-        onClose={() => setIsMenuOpen(false)}
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-      />
-
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 pb-24">
-        {renderContent()}
-      </main>
-
-      <ChatInterface
-        isOpen={isChatOpen}
-        onClose={() => setIsChatOpen(false)}
-      />
-
-      <NotificationCenter
-        isOpen={isNotificationOpen}
-        onClose={() => setIsNotificationOpen(false)}
-      />
-      
-      <WeatherAlerts
-        isOpen={isWeatherOpen}
-        onClose={() => setIsWeatherOpen(false)}
-      />
-      
-      <CropDiagnosis
-        isOpen={isCropDiagnosisOpen}
-        onClose={() => setIsCropDiagnosisOpen(false)}
-      />
-      
-      <CommunityForum
-        isOpen={isCommunityOpen}
-        onClose={() => setIsCommunityOpen(false)}
-      />
-      
-      <ActivityLogger
-        isOpen={isActivityLoggerOpen}
-        onClose={() => setIsActivityLoggerOpen(false)}
-        onSave={handleSaveActivity}
-        crops={currentFarmerData.farm.crops}
-      />
-
-      {/* Floating Chat Button - Fixed bottom-right */}
-      <button
-        onClick={() => setIsChatOpen(true)}
-        className="fixed bottom-6 right-6 bg-gradient-to-r from-green-600 to-green-500 text-white p-4 rounded-full shadow-lg hover:shadow-xl transition-all transform hover:scale-110 z-30"
-      >
-        <MessageSquare className="h-6 w-6" />
-      </button>
-
-      {/* Floating Calendar Button - Fixed top-right */}
-      <button
-        onClick={() => setActiveTab('farm')}
-        className="fixed top-20 right-6 bg-gradient-to-r from-blue-600 to-blue-500 text-white p-3 rounded-full shadow-lg hover:shadow-xl transition-all transform hover:scale-110 z-30"
-      >
-        <Calendar className="h-5 w-5" />
-      </button>
-      </div>
+      <NavigationContainer>
+        <StatusBar 
+          backgroundColor="#2d5016" 
+          barStyle="light-content" 
+        />
+        <Stack.Navigator screenOptions={{ headerShown: false }}>
+          {isAuthenticated ? (
+            <>
+              <Stack.Screen name="MainApp" component={DrawerNavigator} />
+              <Stack.Screen name="KnowledgeBase" component={KnowledgeBase} />
+              <Stack.Screen name="KnowledgeDetail" component={KnowledgeDetail} />
+              <Stack.Screen name="AddKnowledge" component={AddKnowledge} />
+              <Stack.Screen name="CropCalendar" component={CropCalendar} />
+              <Stack.Screen name="ActivityDetail" component={ActivityDetail} />
+              <Stack.Screen name="AddActivity" component={AddActivity} />
+            <Stack.Screen name="WeatherAlerts" component={WeatherAlerts} />
+            <Stack.Screen name="GovernmentSchemes" component={GovernmentSchemes} />
+            <Stack.Screen name="NotificationSettings" component={NotificationSettings} />
+            <Stack.Screen name="Chatbot" component={Chatbot} />
+            </>
+          ) : (
+            <Stack.Screen name="Auth">
+              {(props) => (
+                <AuthScreen 
+                  {...props} 
+                  onLogin={handleLogin}
+                />
+              )}
+            </Stack.Screen>
+          )}
+        </Stack.Navigator>
+        <NetworkStatus />
+      </NavigationContainer>
     </ErrorBoundary>
   );
-}
+};
 
 export default App;

@@ -1,166 +1,74 @@
 import express from 'express';
-import multer from 'multer';
-import sharp from 'sharp';
-import path from 'path';
-import fs from 'fs';
 import Post from '../models/Post.js';
-import { authenticateToken, optionalAuth } from '../middleware/auth.js';
-import { validateImageFile, sanitizeText } from '../utils/validation.js';
+import User from '../models/User.js';
+import { auth, optionalAuth } from '../middleware/auth.js';
+import { validationService } from '../utils/validation.js';
+import { errorService } from '../utils/errorService.js';
 
 const router = express.Router();
 
-// Configure multer for image uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = 'uploads/community';
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
-
-const upload = multer({
-  storage: storage,
-  limits: {
-    fileSize: 5 * 1024 * 1024, // 5MB limit
-    files: 3 // Maximum 3 images per post
-  },
-  fileFilter: (req, file, cb) => {
-    const validation = validateImageFile(file);
-    if (validation.valid) {
-      cb(null, true);
-    } else {
-      cb(new Error(validation.error), false);
-    }
-  }
-});
-
-// Create a new post
-router.post('/', authenticateToken, upload.array('images', 3), async (req, res) => {
-  try {
-    const { title, content, category, tags } = req.body;
-    const authorId = req.user.userId;
-
-    if (!title || !content) {
-      return res.status(400).json({
-        success: false,
-        message: 'Title and content are required'
-      });
-    }
-
-    // Sanitize content
-    const sanitizedContent = sanitizeText(content);
-    const sanitizedTitle = sanitizeText(title);
-
-    // Process uploaded images
-    const processedImages = [];
-    if (req.files) {
-      for (const file of req.files) {
-        const compressedPath = file.path.replace(/\.[^/.]+$/, '_compressed.jpg');
-        
-        await sharp(file.path)
-          .resize(800, 600, { fit: 'inside', withoutEnlargement: true })
-          .jpeg({ quality: 80 })
-          .toFile(compressedPath);
-
-        processedImages.push({
-          filename: path.basename(compressedPath),
-          originalName: file.originalname,
-          mimetype: 'image/jpeg',
-          size: fs.statSync(compressedPath).size,
-          url: `/uploads/community/${path.basename(compressedPath)}`
-        });
-
-        // Remove original file
-        fs.unlinkSync(file.path);
-      }
-    }
-
-    // Create post
-    const post = new Post({
-      author: authorId,
-      title: sanitizedTitle,
-      content: sanitizedContent,
-      images: processedImages,
-      category: category || 'general',
-      tags: tags ? tags.split(',').map(tag => tag.trim()).filter(tag => tag.length > 0) : []
-    });
-
-    await post.save();
-    await post.populate('author', 'name village district');
-
-    res.status(201).json({
-      success: true,
-      message: 'Post created successfully',
-      post
-    });
-
-  } catch (error) {
-    console.error('Create post error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to create post. Please try again.'
-    });
-  }
-});
-
-// Get all posts with pagination
+// Get all posts (public endpoint with optional auth)
 router.get('/', optionalAuth, async (req, res) => {
   try {
-    const { page = 1, limit = 10, category, search } = req.query;
-    const userId = req.user?.userId;
+    const { 
+      page = 1, 
+      limit = 20, 
+      category, 
+      cropName, 
+      tags,
+      location,
+      sortBy = 'createdAt',
+      sortOrder = 'desc'
+    } = req.query;
 
-    // Build query
-    let query = { isDeleted: false };
+    // Build filter object
+    const filter = { isDeleted: false };
     
-    if (category && category !== 'all') {
-      query.category = category;
+    if (category) filter.category = category;
+    if (cropName) filter['cropRelated.cropName'] = new RegExp(cropName, 'i');
+    if (tags) filter.tags = { $in: tags.split(',') };
+    if (location) filter['location.district'] = new RegExp(location, 'i');
+
+    // Build sort object
+    const sort = {};
+    if (sortBy === 'popular') {
+      sort.likeCount = -1;
+      sort.createdAt = -1;
+    } else {
+      sort[sortBy] = sortOrder === 'desc' ? -1 : 1;
     }
 
-    if (search) {
-      query.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { content: { $regex: search, $options: 'i' } },
-        { tags: { $in: [new RegExp(search, 'i')] } }
-      ];
-    }
-
-    const posts = await Post.find(query)
-      .populate('author', 'name village district')
-      .sort({ isPinned: -1, createdAt: -1 })
+    const posts = await Post.find(filter)
+      .sort(sort)
       .limit(limit * 1)
-      .skip((page - 1) * limit);
+      .skip((page - 1) * limit)
+      .populate('author', 'name profileImage role')
+      .populate('likes.user', 'name')
+      .populate('dislikes.user', 'name')
+      .populate('replies.author', 'name profileImage')
+      .lean();
 
-    const total = await Post.countDocuments(query);
-
-    // Add user interaction data if authenticated
-    if (userId) {
-      posts.forEach(post => {
-        post.userLiked = post.likes.some(like => like.user.toString() === userId);
-        post.userDisliked = post.dislikes.some(dislike => dislike.user.toString() === userId);
-      });
-    }
+    const total = await Post.countDocuments(filter);
 
     res.json({
       success: true,
-      posts,
-      pagination: {
-        current: parseInt(page),
-        pages: Math.ceil(total / limit),
-        total
+      data: {
+        posts,
+        pagination: {
+          current: parseInt(page),
+          pages: Math.ceil(total / limit),
+          total,
+          limit: parseInt(limit)
+        }
       }
     });
 
   } catch (error) {
     console.error('Get posts error:', error);
+    const appError = errorService.handleApiError(error, 'getPosts');
     res.status(500).json({
       success: false,
-      message: 'Failed to get posts'
+      message: errorService.getUserFriendlyMessage(appError)
     });
   }
 });
@@ -168,12 +76,15 @@ router.get('/', optionalAuth, async (req, res) => {
 // Get single post
 router.get('/:id', optionalAuth, async (req, res) => {
   try {
-    const { id } = req.params;
-    const userId = req.user?.userId;
+    const postId = req.params.id;
 
-    const post = await Post.findOne({ _id: id, isDeleted: false })
-      .populate('author', 'name village district')
-      .populate('replies.author', 'name village district');
+    const post = await Post.findOne({ _id: postId, isDeleted: false })
+      .populate('author', 'name profileImage role')
+      .populate('likes.user', 'name')
+      .populate('dislikes.user', 'name')
+      .populate('replies.author', 'name profileImage')
+      .populate('replies.likes.user', 'name')
+      .populate('replies.dislikes.user', 'name');
 
     if (!post) {
       return res.status(404).json({
@@ -183,186 +94,125 @@ router.get('/:id', optionalAuth, async (req, res) => {
     }
 
     // Increment view count
-    post.viewCount += 1;
-    await post.save();
-
-    // Add user interaction data if authenticated
-    if (userId) {
-      post.userLiked = post.likes.some(like => like.user.toString() === userId);
-      post.userDisliked = post.dislikes.some(dislike => dislike.user.toString() === userId);
-      
-      post.replies.forEach(reply => {
-        reply.userLiked = reply.likes.some(like => like.user.toString() === userId);
-        reply.userDisliked = reply.dislikes.some(dislike => dislike.user.toString() === userId);
-      });
-    }
+    await Post.findByIdAndUpdate(postId, { $inc: { views: 1 } });
 
     res.json({
       success: true,
-      post
+      data: { post }
     });
 
   } catch (error) {
     console.error('Get post error:', error);
+    const appError = errorService.handleApiError(error, 'getPost');
     res.status(500).json({
       success: false,
-      message: 'Failed to get post'
+      message: errorService.getUserFriendlyMessage(appError)
     });
   }
 });
 
-// Like/Unlike a post
-router.post('/:id/like', authenticateToken, async (req, res) => {
+// Create new post
+router.post('/', auth, async (req, res) => {
   try {
-    const { id } = req.params;
-    const userId = req.user.userId;
+    const authorId = req.user.id;
+    const postData = { ...req.body, author: authorId };
 
-    const post = await Post.findById(id);
-    if (!post) {
-      return res.status(404).json({
-        success: false,
-        message: 'Post not found'
-      });
-    }
-
-    // Check if user already liked
-    const existingLike = post.likes.find(like => like.user.toString() === userId);
-    const existingDislike = post.dislikes.find(dislike => dislike.user.toString() === userId);
-
-    if (existingLike) {
-      // Remove like
-      post.likes = post.likes.filter(like => like.user.toString() !== userId);
-    } else {
-      // Add like and remove dislike if exists
-      post.likes.push({ user: userId });
-      if (existingDislike) {
-        post.dislikes = post.dislikes.filter(dislike => dislike.user.toString() !== userId);
-      }
-    }
-
-    await post.save();
-
-    res.json({
-      success: true,
-      message: existingLike ? 'Post unliked' : 'Post liked',
-      likes: post.likes.length,
-      dislikes: post.dislikes.length
-    });
-
-  } catch (error) {
-    console.error('Like post error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to like post'
-    });
-  }
-});
-
-// Dislike/Undislike a post
-router.post('/:id/dislike', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const userId = req.user.userId;
-
-    const post = await Post.findById(id);
-    if (!post) {
-      return res.status(404).json({
-        success: false,
-        message: 'Post not found'
-      });
-    }
-
-    // Check if user already disliked
-    const existingDislike = post.dislikes.find(dislike => dislike.user.toString() === userId);
-    const existingLike = post.likes.find(like => like.user.toString() === userId);
-
-    if (existingDislike) {
-      // Remove dislike
-      post.dislikes = post.dislikes.filter(dislike => dislike.user.toString() !== userId);
-    } else {
-      // Add dislike and remove like if exists
-      post.dislikes.push({ user: userId });
-      if (existingLike) {
-        post.likes = post.likes.filter(like => like.user.toString() !== userId);
-      }
-    }
-
-    await post.save();
-
-    res.json({
-      success: true,
-      message: existingDislike ? 'Post undisliked' : 'Post disliked',
-      likes: post.likes.length,
-      dislikes: post.dislikes.length
-    });
-
-  } catch (error) {
-    console.error('Dislike post error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Failed to dislike post'
-    });
-  }
-});
-
-// Reply to a post
-router.post('/:id/reply', authenticateToken, async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { content } = req.body;
-    const userId = req.user.userId;
-
-    if (!content) {
+    // Validate post data
+    const validation = validationService.validatePost(postData);
+    if (!validation.isValid) {
       return res.status(400).json({
         success: false,
-        message: 'Reply content is required'
+        message: 'Validation failed',
+        errors: validation.errors
       });
     }
 
-    const post = await Post.findById(id);
-    if (!post) {
-      return res.status(404).json({
-        success: false,
-        message: 'Post not found'
-      });
-    }
+    const post = new Post(postData);
+    await post.save();
 
-    // Sanitize content
-    const sanitizedContent = sanitizeText(content);
-
-    // Add reply
-    post.replies.push({
-      author: userId,
-      content: sanitizedContent
+    // Update user statistics
+    await User.findByIdAndUpdate(authorId, {
+      $inc: { 'statistics.totalPosts': 1 }
     });
 
-    await post.save();
-    await post.populate('replies.author', 'name village district');
-
-    const newReply = post.replies[post.replies.length - 1];
+    // Populate the post for response
+    await post.populate('author', 'name profileImage role');
 
     res.status(201).json({
       success: true,
-      message: 'Reply added successfully',
-      reply: newReply
+      message: 'Post created successfully',
+      data: { post }
     });
 
   } catch (error) {
-    console.error('Reply to post error:', error);
+    console.error('Create post error:', error);
+    const appError = errorService.handleApiError(error, 'createPost');
     res.status(500).json({
       success: false,
-      message: 'Failed to add reply'
+      message: errorService.getUserFriendlyMessage(appError)
     });
   }
 });
 
-// Delete a post (only by author)
-router.delete('/:id', authenticateToken, async (req, res) => {
+// Update post
+router.put('/:id', auth, async (req, res) => {
   try {
-    const { id } = req.params;
-    const userId = req.user.userId;
+    const postId = req.params.id;
+    const userId = req.user.id;
+    const updates = req.body;
 
-    const post = await Post.findOne({ _id: id, author: userId });
+    // Remove fields that shouldn't be updated directly
+    delete updates.author;
+    delete updates._id;
+    delete updates.likes;
+    delete updates.dislikes;
+    delete updates.replies;
+    delete updates.views;
+
+    const post = await Post.findOneAndUpdate(
+      { _id: postId, author: userId, isDeleted: false },
+      updates,
+      { new: true, runValidators: true }
+    ).populate('author', 'name profileImage role');
+
+    if (!post) {
+      return res.status(404).json({
+        success: false,
+        message: 'Post not found or you are not authorized to edit it'
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Post updated successfully',
+      data: { post }
+    });
+
+  } catch (error) {
+    console.error('Update post error:', error);
+    const appError = errorService.handleApiError(error, 'updatePost');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
+    });
+  }
+});
+
+// Delete post
+router.delete('/:id', auth, async (req, res) => {
+  try {
+    const postId = req.params.id;
+    const userId = req.user.id;
+
+    const post = await Post.findOneAndUpdate(
+      { _id: postId, author: userId, isDeleted: false },
+      { 
+        isDeleted: true, 
+        deletedAt: new Date(), 
+        deletedBy: userId 
+      }
+    );
+
     if (!post) {
       return res.status(404).json({
         success: false,
@@ -370,8 +220,10 @@ router.delete('/:id', authenticateToken, async (req, res) => {
       });
     }
 
-    post.isDeleted = true;
-    await post.save();
+    // Update user statistics
+    await User.findByIdAndUpdate(userId, {
+      $inc: { 'statistics.totalPosts': -1 }
+    });
 
     res.json({
       success: true,
@@ -380,9 +232,277 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 
   } catch (error) {
     console.error('Delete post error:', error);
+    const appError = errorService.handleApiError(error, 'deletePost');
     res.status(500).json({
       success: false,
-      message: 'Failed to delete post'
+      message: errorService.getUserFriendlyMessage(appError)
+    });
+  }
+});
+
+// Like/Unlike post
+router.post('/:id/like', auth, async (req, res) => {
+  try {
+    const postId = req.params.id;
+    const userId = req.user.id;
+
+    const post = await Post.findOne({ _id: postId, isDeleted: false });
+    if (!post) {
+      return res.status(404).json({
+        success: false,
+        message: 'Post not found'
+      });
+    }
+
+    await post.addLike(userId);
+
+    res.json({
+      success: true,
+      message: 'Post liked successfully',
+      data: {
+        likeCount: post.likeCount,
+        dislikeCount: post.dislikeCount
+      }
+    });
+
+  } catch (error) {
+    console.error('Like post error:', error);
+    const appError = errorService.handleApiError(error, 'likePost');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
+    });
+  }
+});
+
+// Dislike/Undislike post
+router.post('/:id/dislike', auth, async (req, res) => {
+  try {
+    const postId = req.params.id;
+    const userId = req.user.id;
+
+    const post = await Post.findOne({ _id: postId, isDeleted: false });
+    if (!post) {
+      return res.status(404).json({
+        success: false,
+        message: 'Post not found'
+      });
+    }
+
+    await post.addDislike(userId);
+
+    res.json({
+      success: true,
+      message: 'Post disliked successfully',
+      data: {
+        likeCount: post.likeCount,
+        dislikeCount: post.dislikeCount
+      }
+    });
+
+  } catch (error) {
+    console.error('Dislike post error:', error);
+    const appError = errorService.handleApiError(error, 'dislikePost');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
+    });
+  }
+});
+
+// Remove reaction from post
+router.delete('/:id/reaction', auth, async (req, res) => {
+  try {
+    const postId = req.params.id;
+    const userId = req.user.id;
+
+    const post = await Post.findOne({ _id: postId, isDeleted: false });
+    if (!post) {
+      return res.status(404).json({
+        success: false,
+        message: 'Post not found'
+      });
+    }
+
+    await post.removeReaction(userId);
+
+    res.json({
+      success: true,
+      message: 'Reaction removed successfully',
+      data: {
+        likeCount: post.likeCount,
+        dislikeCount: post.dislikeCount
+      }
+    });
+
+  } catch (error) {
+    console.error('Remove reaction error:', error);
+    const appError = errorService.handleApiError(error, 'removeReaction');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
+    });
+  }
+});
+
+// Add reply to post
+router.post('/:id/reply', auth, async (req, res) => {
+  try {
+    const postId = req.params.id;
+    const userId = req.user.id;
+    const { content, images = [] } = req.body;
+
+    if (!content || content.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Reply content is required'
+      });
+    }
+
+    const post = await Post.findOne({ _id: postId, isDeleted: false });
+    if (!post) {
+      return res.status(404).json({
+        success: false,
+        message: 'Post not found'
+      });
+    }
+
+    await post.addReply(userId, content, images);
+
+    // Populate the updated post
+    await post.populate('replies.author', 'name profileImage');
+
+    res.json({
+      success: true,
+      message: 'Reply added successfully',
+      data: { post }
+    });
+
+  } catch (error) {
+    console.error('Add reply error:', error);
+    const appError = errorService.handleApiError(error, 'addReply');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
+    });
+  }
+});
+
+// Delete reply
+router.delete('/:id/reply/:replyId', auth, async (req, res) => {
+  try {
+    const postId = req.params.id;
+    const replyId = req.params.replyId;
+    const userId = req.user.id;
+
+    const post = await Post.findOne({ _id: postId, isDeleted: false });
+    if (!post) {
+      return res.status(404).json({
+        success: false,
+        message: 'Post not found'
+      });
+    }
+
+    const reply = post.replies.id(replyId);
+    if (!reply) {
+      return res.status(404).json({
+        success: false,
+        message: 'Reply not found'
+      });
+    }
+
+    // Check if user is the author of the reply or the post
+    if (!reply.author.equals(userId) && !post.author.equals(userId)) {
+      return res.status(403).json({
+        success: false,
+        message: 'You are not authorized to delete this reply'
+      });
+    }
+
+    await post.deleteReply(replyId);
+
+    res.json({
+      success: true,
+      message: 'Reply deleted successfully',
+      data: { post }
+    });
+
+  } catch (error) {
+    console.error('Delete reply error:', error);
+    const appError = errorService.handleApiError(error, 'deleteReply');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
+    });
+  }
+});
+
+// Report post
+router.post('/:id/report', auth, async (req, res) => {
+  try {
+    const postId = req.params.id;
+    const userId = req.user.id;
+    const { reason, description = '' } = req.body;
+
+    if (!reason) {
+      return res.status(400).json({
+        success: false,
+        message: 'Report reason is required'
+      });
+    }
+
+    const post = await Post.findOne({ _id: postId, isDeleted: false });
+    if (!post) {
+      return res.status(404).json({
+        success: false,
+        message: 'Post not found'
+      });
+    }
+
+    await post.reportPost(userId, reason, description);
+
+    res.json({
+      success: true,
+      message: 'Post reported successfully'
+    });
+
+  } catch (error) {
+    console.error('Report post error:', error);
+    const appError = errorService.handleApiError(error, 'reportPost');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
+    });
+  }
+});
+
+// Get trending posts
+router.get('/trending/list', optionalAuth, async (req, res) => {
+  try {
+    const { limit = 10 } = req.query;
+
+    const trendingPosts = await Post.find({ isDeleted: false })
+      .sort({ 
+        likeCount: -1, 
+        replyCount: -1, 
+        views: -1,
+        createdAt: -1 
+      })
+      .limit(parseInt(limit))
+      .populate('author', 'name profileImage role')
+      .lean();
+
+    res.json({
+      success: true,
+      data: { posts: trendingPosts }
+    });
+
+  } catch (error) {
+    console.error('Get trending posts error:', error);
+    const appError = errorService.handleApiError(error, 'getTrendingPosts');
+    res.status(500).json({
+      success: false,
+      message: errorService.getUserFriendlyMessage(appError)
     });
   }
 });
