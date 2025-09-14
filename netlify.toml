@@ -1,0 +1,54 @@
+[build]
+  # Directory to change to before starting a build
+  base = "server"
+  
+  # Directory that contains the deploy-ready HTML files and assets
+  publish = "."
+  
+  # Default build command
+  command = "npm install && npm start"
+
+[build.environment]
+  NODE_VERSION = "18"
+  NPM_VERSION = "9"
+
+# Production context: all deploys from the Production branch
+[context.production]
+  command = "npm ci && npm start"
+
+# Deploy Preview context: all deploys generated from a pull/merge request
+[context.deploy-preview]
+  command = "npm ci && npm start"
+
+# Branch Deploy context: all deploys that are not from a pull/merge request or from the Production branch
+[context.branch-deploy]
+  command = "npm ci && npm start"
+
+# Redirect rules for API routes
+[[redirects]]
+  from = "/api/*"
+  to = "/.netlify/functions/:splat"
+  status = 200
+
+# SPA fallback
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
+# Headers for API routes
+[[headers]]
+  for = "/api/*"
+  [headers.values]
+    Access-Control-Allow-Origin = "*"
+    Access-Control-Allow-Headers = "Content-Type, Authorization"
+    Access-Control-Allow-Methods = "GET, POST, PUT, DELETE, OPTIONS"
+
+# Headers for all files
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-XSS-Protection = "1; mode=block"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"

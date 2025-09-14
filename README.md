@@ -1,132 +1,182 @@
-# 🌾 Kisan - Agricultural Management App
+# 🌾 Krishi Sakhi - AI-Powered Farming Assistant
 
-A comprehensive agricultural management application built with React, TypeScript, and Vite. This app helps farmers manage their crops, track activities, get real-time market prices, and access agricultural knowledge.
+Krishi Sakhi is a comprehensive mobile application designed to assist farmers with AI-powered crop disease detection, farming guidance, community support, and real-time agricultural information.
 
 ## 🚀 Features
 
-- **Dashboard**: Real-time overview of farm activities and weather
-- **AI Chatbot**: Voice-enabled chatbot in Malayalam and English
-- **Knowledge Base**: Comprehensive agricultural information and advisories
-- **Farmer Profile**: Detailed farm information and crop management
-- **Activity Tracking**: Auto-generated activity schedules and reminders
-- **Market Prices**: Real-time agricultural market prices and trends
-- **Weather Alerts**: Current weather conditions and forecasts
-- **Government Schemes**: Information about agricultural schemes and subsidies
+- **🤖 AI Chatbot**: Multi-language (English & Malayalam) intelligent assistant
+- **🌱 Crop Doctor**: AI-powered disease detection with treatment recommendations
+- **📅 Crop Calendar**: Activity tracking with priority alerts and roadmap
+- **📚 Knowledge Base**: Comprehensive farming guides and search functionality
+- **👥 Community Forum**: Farmer-to-farmer interaction and knowledge sharing
+- **🌤️ Weather Alerts**: Real-time weather information and government schemes
+- **🛡️ Error Handling**: Comprehensive error recovery and offline support
+- **✅ Input Validation**: Security features and data validation
 
 ## 🛠️ Tech Stack
 
-- **Frontend**: React 18, TypeScript, Vite
-- **Styling**: Tailwind CSS
-- **Icons**: Lucide React
-- **Testing**: Jest, React Testing Library
-- **Deployment**: Vercel
+- **Frontend**: React Native, TypeScript
+- **Backend**: Node.js, Express.js
+- **Database**: MongoDB with Mongoose
+- **AI/ML**: TensorFlow.js, OpenAI API
+- **Authentication**: JWT, OTP-based
+- **Deployment**: Vercel, Netlify
 
-## 📦 Installation
+## 📱 Mobile App Setup
 
-1. Clone the repository:
+### Prerequisites
+- Node.js (>=18.0.0)
+- npm (>=8.0.0)
+- React Native CLI
+- Android Studio / Xcode
+
+### Installation
 ```bash
-git clone https://github.com/iamabhi1612/ks_c.git
-cd ks_c
-```
+# Clone the repository
+git clone https://github.com/emailready2test-collab/ks.git
+cd ks
 
-2. Install dependencies:
-```bash
+# Install dependencies
 npm install --legacy-peer-deps
+
+# Start the development server
+npm start
+
+# Run on Android
+npm run android
+
+# Run on iOS
+npm run ios
 ```
 
-3. Start development server:
+## 🌐 Backend API Setup
+
+### Local Development
 ```bash
+# Navigate to server directory
+cd server
+
+# Install dependencies
+npm install --legacy-peer-deps
+
+# Start development server
 npm run dev
 ```
 
-4. Build for production:
-```bash
-npm run build
-```
-
-## 🧪 Testing
-
-Run the test suite:
-```bash
-npm test
-```
-
-Run tests in watch mode:
-```bash
-npm run test:watch
-```
-
-Generate coverage report:
-```bash
-npm run test:coverage
+### Environment Variables
+Create a `.env` file in the server directory:
+```env
+NODE_ENV=development
+PORT=3000
+MONGODB_URI=mongodb://localhost:27017/krishi-sakhi
+JWT_SECRET=your-jwt-secret
+OPENAI_API_KEY=your-openai-api-key
+FIREBASE_CONFIG=your-firebase-config
 ```
 
 ## 🚀 Deployment
 
-This app is configured for deployment on Vercel:
+### Vercel Deployment
+The backend API is already deployed on Vercel:
+- **Production URL**: https://krishisakhi-f21embyeq-emailready2test-collabs-projects.vercel.app
+- **Inspect URL**: https://vercel.com/emailready2test-collabs-projects/krishi_sakhi
 
-1. Connect your GitHub repository to Vercel
-2. Vercel will automatically detect the Vite configuration
-3. Deploy with default settings
+### Netlify Deployment
+For Netlify deployment, use the optimized configuration:
 
-## 📱 Features Overview
+1. **Connect to Netlify**:
+   - Go to [Netlify](https://netlify.com)
+   - Connect your GitHub repository
+   - Use the following build settings:
+     - **Base directory**: `server`
+     - **Build command**: `npm install --legacy-peer-deps`
+     - **Publish directory**: `.`
 
-### Dashboard
-- Real-time weather information
-- Activity reminders and progress tracking
-- Quick access to all features
-- Notification center
+2. **Environment Variables** (in Netlify dashboard):
+   ```
+   NODE_ENV=production
+   MONGODB_URI=your-mongodb-uri
+   JWT_SECRET=your-jwt-secret
+   OPENAI_API_KEY=your-openai-api-key
+   ```
 
-### AI Chatbot
-- Voice input/output in Malayalam and English
-- Natural language processing for agricultural queries
-- Context-aware responses
-- Offline fallback support
+3. **Build Settings**:
+   - Node version: 18
+   - NPM version: 9
+   - Use `--legacy-peer-deps` flag for dependency resolution
 
-### Knowledge Base
-- Searchable agricultural information
-- Real-time pest alerts and government advisories
-- Categorized content (crops, diseases, treatments)
-- Offline access to cached content
+### Fixing Dependency Conflicts
 
-### Farmer Profile
-- Personal and farm details
-- Crop information and management
-- Activity outline generation
-- Progress tracking
+If you encounter `ERESOLVE unable to resolve dependency tree` errors:
 
-### Market Prices
-- Real-time price updates
-- Price trends and analysis
-- Multiple market locations
-- Historical data
+1. **Use legacy peer deps**:
+   ```bash
+   npm install --legacy-peer-deps
+   ```
 
-## 🔧 Configuration
+2. **Force installation**:
+   ```bash
+   npm install --force
+   ```
 
-The app uses environment variables for configuration. Create a `.env.local` file:
+3. **Clear npm cache**:
+   ```bash
+   npm cache clean --force
+   rm -rf node_modules package-lock.json
+   npm install --legacy-peer-deps
+   ```
 
-```env
-VITE_API_BASE_URL=https://api.example.com
-VITE_WEATHER_API_KEY=your_weather_api_key
-VITE_MARKET_API_KEY=your_market_api_key
+## 📁 Project Structure
+
+```
+krishi-sakhi/
+├── src/                    # React Native source code
+│   ├── components/         # Reusable components
+│   ├── screens/           # App screens
+│   ├── services/          # API services
+│   └── config/            # Configuration files
+├── server/                # Backend API
+│   ├── routes/            # API routes
+│   ├── models/            # Database models
+│   ├── middleware/        # Express middleware
+│   └── utils/             # Utility functions
+├── package.json           # Root package.json
+├── netlify.toml          # Netlify configuration
+├── vercel.json           # Vercel configuration
+└── README.md             # This file
 ```
 
-## 📄 License
+## 🔧 API Endpoints
 
-This project is licensed under the MIT License.
+- **Authentication**: `/api/auth/*`
+- **Crop Doctor**: `/api/crop-doctor/*`
+- **Community**: `/api/community/*`
+- **Knowledge Base**: `/api/knowledge/*`
+- **Crop Calendar**: `/api/calendar/*`
+- **Weather Alerts**: `/api/alerts/*`
+- **Chatbot**: `/api/chatbot/*`
 
 ## 🤝 Contributing
 
 1. Fork the repository
 2. Create a feature branch
-3. Make your changes
-4. Add tests for new features
-5. Submit a pull request
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
-## 📞 Support
+## 📄 License
 
-For support and questions, please open an issue on GitHub.
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## 👥 Team
+
+- **Developer**: MALLEPAKA GANESH
+- **Repository**: https://github.com/emailready2test-collab/ks.git
+
+## 🆘 Support
+
+For support and questions, please open an issue in the GitHub repository.
 
 ---
 
-Built with ❤️ for farmers and agricultural communities.
+**Krishi Sakhi** - Empowering farmers with AI technology 🌾📱✨
