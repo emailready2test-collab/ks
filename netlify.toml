@@ -1,12 +1,7 @@
 [build]
-  # Directory to change to before starting a build
-  base = "server"
-  
-  # Directory that contains the deploy-ready HTML files and assets
-  publish = "."
-  
-  # Default build command
-  command = "npm install && npm start"
+  # Build the Vite frontend from repo root
+  publish = "dist"
+  command = "npm install --legacy-peer-deps && npm run build"
 
 [build.environment]
   NODE_VERSION = "18"
@@ -14,35 +9,21 @@
 
 # Production context: all deploys from the Production branch
 [context.production]
-  command = "npm ci && npm start"
+  command = "npm install --legacy-peer-deps && npm run build"
 
 # Deploy Preview context: all deploys generated from a pull/merge request
 [context.deploy-preview]
-  command = "npm ci && npm start"
+  command = "npm install --legacy-peer-deps && npm run build"
 
 # Branch Deploy context: all deploys that are not from a pull/merge request or from the Production branch
 [context.branch-deploy]
-  command = "npm ci && npm start"
+  command = "npm install --legacy-peer-deps && npm run build"
 
-# Redirect rules for API routes
-[[redirects]]
-  from = "/api/*"
-  to = "/.netlify/functions/:splat"
-  status = 200
-
-# SPA fallback
+# SPA fallback (Vite)
 [[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
-
-# Headers for API routes
-[[headers]]
-  for = "/api/*"
-  [headers.values]
-    Access-Control-Allow-Origin = "*"
-    Access-Control-Allow-Headers = "Content-Type, Authorization"
-    Access-Control-Allow-Methods = "GET, POST, PUT, DELETE, OPTIONS"
 
 # Headers for all files
 [[headers]]
