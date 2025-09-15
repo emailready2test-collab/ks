@@ -11,6 +11,7 @@ export default defineConfig({
       { find: /^@expo\/vector-icons(\/.*)?$/, replacement: '/src/shims/vectorIcons.tsx' },
       { find: /^@react-native-community\/netinfo(\/.*)?$/, replacement: '/src/shims/netinfo.ts' },
       { find: /^react-native-safe-area-context(\/.*)?$/, replacement: '/src/shims/safearea.tsx' },
+      { find: /^@react-native-async-storage\/async-storage(\/.*)?$/, replacement: '/src/shims/asyncStorage.ts' },
     ],
   },
   build: {
