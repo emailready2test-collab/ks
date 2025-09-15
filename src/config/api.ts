@@ -1,7 +1,10 @@
 // API configuration
-export const API_BASE_URL = __DEV__ 
-  ? 'http://localhost:5000/api' 
-  : 'https://your-production-api.com/api';
+// Use Vite env var when available; fallback to same-origin API path or local dev
+const ENV_BASE = (import.meta as any)?.env?.VITE_API_BASE_URL as string | undefined;
+// Prefer same-origin /api (proxied by Netlify), fallback to VITE var, then localhost
+export const API_BASE_URL = (typeof window !== 'undefined' ? `${window.location.origin}/api` : undefined)
+  || ENV_BASE
+  || 'http://localhost:5000/api';
 
 export const API_ENDPOINTS = {
   AUTH: {
