@@ -8,46 +8,47 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import Icon from 'react-native-vector-icons/MaterialIcons';
 
 // Import screens
-import AuthScreen from './src/screens/AuthScreen';
-import DashboardScreen from './src/screens/DashboardScreen';
-import CropDoctorScreen from './src/screens/CropDoctorScreen';
-import CommunityScreen from './src/screens/CommunityScreen';
-import ChatScreen from './src/screens/ChatScreen';
-import ActivityTrackingScreen from './src/screens/ActivityTrackingScreen';
-import CropCalendarScreen from './src/screens/CropCalendarScreen';
-import WeatherAlertsScreen from './src/screens/WeatherAlertsScreen';
-import GovernmentSchemesScreen from './src/screens/GovernmentSchemesScreen';
-import KnowledgeBaseScreen from './src/screens/KnowledgeBaseScreen';
-import ProfileScreen from './src/screens/ProfileScreen';
-import SettingsScreen from './src/screens/SettingsScreen';
+import AuthScreen from './screens/AuthScreen';
+import DashboardScreen from './screens/DashboardScreen';
+import CropDoctorScreen from './screens/CropDoctorScreen';
+import CommunityScreen from './screens/CommunityScreen';
+import ChatScreen from './screens/ChatScreen';
+// Temporarily disable ActivityTracking screen for web build
+const ActivityTrackingScreen = DashboardScreen;
+import CropCalendarScreen from './screens/CropCalendarScreen';
+import WeatherAlertsScreen from './screens/WeatherAlertsScreen';
+import GovernmentSchemesScreen from './screens/GovernmentSchemesScreen';
+import KnowledgeBaseScreen from './screens/KnowledgeBaseScreen';
+import ProfileScreen from './screens/ProfileScreen';
+import SettingsScreen from './screens/SettingsScreen';
 
 // Import knowledge base components
-import KnowledgeBase from './src/components/KnowledgeBase';
-import KnowledgeDetail from './src/components/KnowledgeDetail';
-import AddKnowledge from './src/components/AddKnowledge';
+import KnowledgeBase from './components/KnowledgeBase';
+import KnowledgeDetail from './components/KnowledgeDetail';
+import AddKnowledge from './components/AddKnowledge';
 
 // Import crop calendar components
-import CropCalendar from './src/components/CropCalendar';
-import ActivityDetail from './src/components/ActivityDetail';
-import AddActivity from './src/components/AddActivity';
+import CropCalendar from './components/CropCalendar';
+import ActivityDetail from './components/ActivityDetail';
+import AddActivity from './components/AddActivity';
 
 // Import alerts system components
-import WeatherAlerts from './src/components/WeatherAlerts';
-import GovernmentSchemes from './src/components/GovernmentSchemes';
-import NotificationSettings from './src/components/NotificationSettings';
+import WeatherAlerts from './components/WeatherAlerts';
+import GovernmentSchemes from './components/GovernmentSchemes';
+import NotificationSettings from './components/NotificationSettings';
 
 // Import error handling components
-import ErrorBoundary from './src/components/ErrorBoundary';
-import NetworkStatus from './src/components/NetworkStatus';
-import RetryComponent from './src/components/RetryComponent';
+import ErrorBoundary from './components/ErrorBoundary';
+import NetworkStatus from './components/NetworkStatus';
+import RetryComponent from './components/RetryComponent';
 
 // Import chatbot components
-import Chatbot from './src/components/Chatbot';
-import VoiceMessage from './src/components/VoiceMessage';
+import Chatbot from './components/Chatbot';
+import VoiceMessage from './components/VoiceMessage';
 
 // Import services
-import { authService } from './src/services/authService';
-import { errorService } from './src/services/errorService';
+import { authService } from './services/authService';
+import { errorService } from './services/errorService';
 
 const Stack = createStackNavigator();
 const Drawer = createDrawerNavigator();

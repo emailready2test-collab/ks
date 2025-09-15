@@ -366,10 +366,7 @@ class OfflineStorageService {
     }
   }
 
-  // Data type constants
-  static get DATA_TYPES() {
-    return OfflineStorageService.DATA_TYPES;
-  }
+  // Data type constants are available via OfflineStorageService.DATA_TYPES
 }
 
 export const offlineStorageService = OfflineStorageService.getInstance();
