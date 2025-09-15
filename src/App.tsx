@@ -223,6 +223,7 @@ const App = () => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [user, setUser] = useState(null);
+  const isWeb = typeof document !== 'undefined';
 
   useEffect(() => {
     checkAuthStatus();
@@ -291,6 +292,16 @@ const App = () => {
         backgroundColor="#2d5016" 
         barStyle="light-content" 
       />
+    );
+  }
+
+  // Minimal, navigation-free render for web to avoid native navigation runtime issues
+  if (isWeb) {
+    return (
+      <ErrorBoundary>
+        <StatusBar backgroundColor="#2d5016" barStyle="light-content" />
+        <DashboardScreen />
+      </ErrorBoundary>
     );
   }
 
