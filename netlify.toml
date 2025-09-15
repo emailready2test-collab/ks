@@ -6,6 +6,7 @@
 [build.environment]
   NODE_VERSION = "18"
   NPM_VERSION = "9"
+  VITE_API_BASE_URL = "https://krishisakhi-f21embyeq-emailready2test-collabs-projects.vercel.app/api"
 
 # Production context: all deploys from the Production branch
 [context.production]
